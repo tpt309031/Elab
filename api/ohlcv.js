@@ -5,17 +5,21 @@ const INTERVALS = {
   "1d": { binance: "1d", okx: "1Dutc", ms: 24 * 60 * 60 * 1000 },
 };
 
-function normalizeRows(rows) {
+function normalizeRows(rows, timeframe) {
+  const intervalMs = INTERVALS[timeframe].ms;
+  const now = Date.now();
   return rows
     .map((row) => ({
       timestamp: new Date(Number(row.timestamp)).toISOString().slice(0, 10),
+      openTime: Number(row.timestamp),
       open: Number(row.open),
       high: Number(row.high),
       low: Number(row.low),
       close: Number(row.close),
       volume: Number(row.volume),
     }))
-    .filter((row) => Number.isFinite(row.close))
+    .filter((row) => Number.isFinite(row.close) && row.openTime + intervalMs <= now)
+    .map(({ openTime, ...row }) => row)
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
@@ -38,6 +42,7 @@ async function fetchBinance(timeframe, startMs) {
       close: item[4],
       volume: item[5],
     })),
+    timeframe,
   );
 }
 
@@ -62,6 +67,7 @@ async function fetchOkx(timeframe, startMs) {
         close: item[4],
         volume: item[5],
       })),
+    timeframe,
   );
 }
 
