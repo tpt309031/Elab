@@ -1,0 +1,15 @@
+.venv
+work
+outputs
+tests
+scripts
+src
+__pycache__
+*.pyc
+*.pyo
+*.log
+app.py
+run_dashboard.ps1
+requirements.txt
+README.md
+/data/

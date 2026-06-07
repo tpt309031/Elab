@@ -1,0 +1,8 @@
+{
+  "name": "btc-energy-index-lab",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "node -e \"console.log('Static BTC Energy Index Lab ready')\""
+  }
+}
