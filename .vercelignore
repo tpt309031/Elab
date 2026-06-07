@@ -1,4 +1,5 @@
 .venv
+.vercel
 work
 outputs
 tests
@@ -12,4 +13,5 @@ app.py
 run_dashboard.ps1
 requirements.txt
 README.md
-/data/
+data/*
+!data/dashboard.json
