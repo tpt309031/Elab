@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BTC Energy Index Lab</title>
+  <title>Energy Index Lab</title>
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <style>
     :root {
@@ -162,9 +162,9 @@
   <header>
     <div class="wrap hero">
       <div>
-        <div class="kicker">Quant Research Console</div>
+        <div class="kicker">wenveebowf</div>
         <h1>BTC Energy Index Lab</h1>
-        <p class="subtitle">Realtime BTC monitor, private-index pattern research, future scenario grading.</p>
+        <p class="subtitle">BTC private-index research.</p>
       </div>
       <div style="text-align:right">
         <span class="status-pill" id="liveStatus">Loading market data...</span>
@@ -187,7 +187,7 @@
         <div class="card">
           <h3 style="margin-top:0">BTC 5m realtime</h3>
           <iframe src="https://s.tradingview.com/widgetembed/?symbol=BINANCE%3ABTCUSDT&interval=5&theme=dark&style=1&timezone=Etc%2FUTC&hide_side_toolbar=0&allow_symbol_change=1&save_image=0"></iframe>
-          <p class="muted">TradingView handles intraday realtime. Forecast grading uses closed UTC daily candles, with provisional grading when only 1-2 closed candles are available.</p>
+          <p class="muted">tradingview.</p>
         </div>
         <div class="card">
           <div class="toolbar">
@@ -206,13 +206,13 @@
           <label>Future year <select id="futureYear"></select></label>
           <label>Future month <select id="futureMonth"></select></label>
           <label>Direction <select id="futureDirection"><option>All</option><option>up</option><option>down</option><option>sideway</option></select></label>
-          <label>Min confidence <input id="futureThreshold" type="number" min="0.36" max="0.95" step="0.01" value="0.60"></label>
+          <label>Confidence <input id="futureThreshold" type="number" min="0.36" max="0.95" step="0.01" value="0.60"></label>
         </div>
         <div id="futureChart" class="plot small"></div>
         <div id="futureNotes"></div>
       </div>
       <div class="card" style="margin-top:16px">
-        <h3>Top ranked pattern calls</h3>
+        <h3>Top ranked</h3>
         <div id="registryCalls"></div>
       </div>
     </section>
@@ -220,11 +220,11 @@
     <section id="patterns" class="pane">
       <div class="grid two">
         <div class="card">
-          <h3>Active prediction patterns</h3>
+          <h3>Active</h3>
           <div class="pattern-list" id="activePatterns"></div>
         </div>
         <div class="card">
-          <h3>Unused watchlist</h3>
+          <h3>Unused</h3>
           <div class="pattern-list" id="unusedPatterns"></div>
         </div>
       </div>
@@ -233,7 +233,7 @@
     <section id="research" class="pane">
       <div class="grid">
         <div class="card"><h3>Index zones</h3><div id="tableIndexZones"></div></div>
-        <div class="card"><h3>Trader trap and gap patterns</h3><div id="tablePatterns"></div></div>
+        <div class="card"><h3>Trap and gap</h3><div id="tablePatterns"></div></div>
         <div class="card"><h3>Weekday analysis</h3><div id="tableWeekday"></div></div>
         <div class="card"><h3>Move-threshold research</h3><div id="tableMoveResearch"></div></div>
       </div>
