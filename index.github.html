@@ -136,6 +136,23 @@
     .scenario .icon { font-size: 22px; font-weight: 900; line-height: 1; }
     .scenario h4 { margin: 0 0 6px; }
     .scenario p { margin: 3px 0; color: var(--muted); }
+    .score-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 14px 0 18px;
+    }
+    .score-card {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(247,147,26,.08), rgba(255,255,255,.025));
+      border-radius: 16px;
+      padding: 13px;
+    }
+    .score-card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .10em; }
+    .score-card .value { margin-top: 5px; color: #fed7aa; font-size: 26px; font-weight: 900; }
+    .score-card .mini { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .score-card .bar { height: 6px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.08); margin-top: 9px; }
+    .score-card .bar span { display: block; height: 100%; background: linear-gradient(90deg, #ef4444, #f7931a, #22c55e); }
     .pattern-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
     .pattern-item {
       border: 1px solid var(--line);
@@ -151,6 +168,14 @@
       border-radius: 14px;
       padding: 12px 14px;
       margin: 12px 0;
+    }
+    .js-plotly-plot .hoverlayer .hovertext path {
+      fill: rgba(11,11,11,.96) !important;
+      stroke: rgba(247,147,26,.85) !important;
+    }
+    .js-plotly-plot .hoverlayer .hovertext text {
+      fill: #f8fafc !important;
+      text-shadow: none !important;
     }
     @media (max-width: 980px) {
       .hero, .grid.two, .grid.metrics, .pattern-list { grid-template-columns: 1fr; }
@@ -206,9 +231,10 @@
           <label>Future year <select id="futureYear"></select></label>
           <label>Future month <select id="futureMonth"></select></label>
           <label>Direction <select id="futureDirection"><option>All</option><option>up</option><option>down</option><option>sideway</option></select></label>
-          <label>Min confidence <input id="futureThreshold" type="number" min="0.36" max="0.95" step="0.01" value="0.60"></label>
+          <label>Min confidence <input id="futureThreshold" type="number" min="0.36" max="0.95" step="0.01" value="0.36"></label>
         </div>
         <div id="futureChart" class="plot small"></div>
+        <div id="confidenceScoreboard"></div>
         <div id="futureNotes"></div>
       </div>
       <div class="card" style="margin-top:16px">
@@ -241,7 +267,7 @@
   </main>
 
   <script>
-    const state = { data: null, ohlcv: [], latestMarketDate: null };
+    const state = { data: null, ohlcv: [], latestMarketDate: null, staticMarketDate: null };
     const fmt = new Intl.NumberFormat("en-US");
     const pct = (value) => value == null || Number.isNaN(Number(value)) ? "-" : `${(Number(value) * 100).toFixed(1)}%`;
     const money = (value) => value == null ? "-" : `$${fmt.format(Math.round(Number(value)))}`;
@@ -331,6 +357,76 @@
       return { status, actual, return3d, range2d, horizon, isFinal };
     }
 
+    function statusScore(status) {
+      return ({ correct: 1, delayed: 0.75, partial: 0.5, wrong: 0 })[status] ?? null;
+    }
+
+    function confidenceBucket(confidence) {
+      const value = Number(confidence);
+      if (value >= 0.80) return "80-100% confidence";
+      if (value >= 0.66) return "66-79% confidence";
+      if (value >= 0.55) return "55-65% confidence";
+      if (value >= 0.45) return "45-54% confidence";
+      return "36-44% confidence";
+    }
+
+    function evaluatedScenarioRows() {
+      return (state.data.scenario_forecasts || []).map((scenario) => {
+        const graded = evaluateScenario(scenario);
+        const status = graded.status || scenario.status || "pending";
+        return { ...scenario, graded, status, score: statusScore(status) };
+      }).filter((row) => row.score != null);
+    }
+
+    function summarizeEvaluations(rows) {
+      const total = rows.length;
+      const score = rows.reduce((sum, row) => sum + row.score, 0);
+      const byStatus = rows.reduce((acc, row) => {
+        acc[row.status] = (acc[row.status] || 0) + 1;
+        return acc;
+      }, {});
+      return {
+        total,
+        accuracy: total ? score / total : 0,
+        correct: byStatus.correct || 0,
+        delayed: byStatus.delayed || 0,
+        partial: byStatus.partial || 0,
+        wrong: byStatus.wrong || 0,
+      };
+    }
+
+    function scoreCard(label, rows) {
+      const summary = summarizeEvaluations(rows);
+      return `
+        <div class="score-card">
+          <div class="label">${label}</div>
+          <div class="value">${pct(summary.accuracy)}</div>
+          <div class="mini">${summary.total} evaluated | OK ${summary.correct} | +/- ${summary.delayed} | partial ${summary.partial} | wrong ${summary.wrong}</div>
+          <div class="bar"><span style="width:${Math.round(summary.accuracy * 100)}%"></span></div>
+        </div>
+      `;
+    }
+
+    function renderConfidenceScoreboard(prefix) {
+      const evaluated = evaluatedScenarioRows();
+      const selectedMonth = evaluated.filter((row) => row.date.startsWith(prefix));
+      const groups = [
+        ["All closed predictions", evaluated],
+        [`${prefix} closed predictions`, selectedMonth],
+        ["Pump models", evaluated.filter((row) => row.forecast === "up")],
+        ["Dump models", evaluated.filter((row) => row.forecast === "down")],
+      ];
+      ["80-100% confidence", "66-79% confidence", "55-65% confidence", "45-54% confidence", "36-44% confidence"].forEach((bucket) => {
+        const rows = evaluated.filter((row) => confidenceBucket(row.confidence) === bucket);
+        if (rows.length) groups.push([bucket, rows]);
+      });
+      document.getElementById("confidenceScoreboard").innerHTML = `
+        <div class="score-grid">
+          ${groups.filter(([, rows]) => rows.length).map(([label, rows]) => scoreCard(label, rows)).join("")}
+        </div>
+      `;
+    }
+
     function mergeLiveOhlcv(staticRows, liveRows) {
       const indexByDate = new Map(state.data.indices.map((row) => [row.date, row]));
       const merged = new Map(staticRows.map((row) => [row.timestamp, { ...row }]));
@@ -368,13 +464,13 @@
       const cards = [
         ["Index records", fmt.format(meta.index_records), `${meta.index_start} to ${meta.index_end}`],
         ["Closed daily candle", state.latestMarketDate, `close ${money(latest?.close)}`],
-        ["Matched candles", fmt.format(matched), `source ${meta.ohlcv_provider}`],
+        ["Static snapshot", state.staticMarketDate || meta.latest_market_date || "-", `live source ${meta.ohlcv_provider}`],
         ["Active patterns", fmt.format(state.data.active_patterns.length), `${state.data.unused_patterns.length} on watchlist`],
       ];
       document.getElementById("metrics").innerHTML = cards.map(([label, value, note]) => `
         <div class="card metric"><div class="label">${label}</div><div class="value">${value}</div><div class="note">${note}</div></div>
       `).join("");
-      document.getElementById("liveStatus").textContent = `Generated ${meta.generated_at} | latest daily ${state.latestMarketDate}`;
+      document.getElementById("liveStatus").textContent = `Generated ${meta.generated_at} | static ${state.staticMarketDate || "-"} | live daily ${state.latestMarketDate}`;
     }
 
     function initSelectors() {
@@ -438,6 +534,7 @@
       Plotly.newPlot("priceChart", traces, {
         paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: "#f8fafc" },
         dragmode: "pan", hovermode: "x unified", legend: { orientation: "h" },
+        hoverlabel: { bgcolor: "#0b0b0b", bordercolor: "#f7931a", font: { color: "#f8fafc", size: 13 } },
         xaxis: { gridcolor: "rgba(255,255,255,.08)", rangeslider: { visible: false }, showspikes: true, spikecolor: "rgba(255,255,255,.66)", spikemode: "across" },
         yaxis: { title: "BTC-USDT", domain: [0.42, 1], gridcolor: "rgba(255,255,255,.08)" },
         yaxis2: { title: "Index", range: [0, 100], domain: [0, 0.33], gridcolor: "rgba(255,255,255,.08)" },
@@ -463,10 +560,13 @@
       ], {
         paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: "#f8fafc" },
         hovermode: "x unified", legend: { orientation: "h" },
+        hoverlabel: { bgcolor: "#0b0b0b", bordercolor: "#f7931a", font: { color: "#f8fafc", size: 13 } },
         xaxis: { gridcolor: "rgba(255,255,255,.08)", showspikes: true, spikecolor: "rgba(255,255,255,.66)", spikemode: "across" },
         yaxis: { title: "Index", range: [0, 100], gridcolor: "rgba(255,255,255,.08)" },
         margin: { l: 52, r: 24, t: 24, b: 38 },
       }, { responsive: true, displaylogo: false });
+
+      renderConfidenceScoreboard(prefix);
 
       const colors = { pending: "#fff", correct: "#22c55e", wrong: "#ef4444", partial: "#86efac", delayed: "#eab308" };
       const icons = { pending: "?", correct: "OK", wrong: "X", partial: "~", delayed: "+/-" };
@@ -570,9 +670,9 @@
       }
       const staticRows = Array.isArray(state.data.ohlcv) ? state.data.ohlcv : [];
       state.ohlcv = mergeLiveOhlcv(staticRows, liveRows);
-      state.latestMarketDate = state.ohlcv
-        .filter((row) => row.timestamp <= (state.data.meta.latest_market_date || "9999-12-31"))
-        .at(-1)?.timestamp || state.data.meta.latest_market_date;
+      state.staticMarketDate = state.data.meta.latest_market_date;
+      state.latestMarketDate = state.ohlcv.at(-1)?.timestamp || state.data.meta.latest_market_date;
+      state.data.meta.latest_market_date = state.latestMarketDate;
       renderMetrics();
       initSelectors();
       bindEvents();
