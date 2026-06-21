@@ -71,13 +71,21 @@ async function fetchOkx(timeframe, startMs) {
   );
 }
 
+function getQueryParam(request, key, fallback) {
+  try {
+    return new URL(request.url || "", "https://btc-energy.local").searchParams.get(key) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 module.exports = async function handler(request, response) {
-  const timeframe = String(request.query.timeframe || "1d");
+  const timeframe = String(getQueryParam(request, "timeframe", "1d"));
   if (!INTERVALS[timeframe]) {
     response.status(400).json({ error: "Unsupported timeframe" });
     return;
   }
-  const startText = String(request.query.start || "2024-01-01");
+  const startText = String(getQueryParam(request, "start", "2024-01-01"));
   const startMs = Number.isFinite(Date.parse(startText)) ? Date.parse(startText) : Date.parse("2024-01-01");
   response.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=3600");
   try {
