@@ -145,6 +145,15 @@
     .fusion-event .date { color: #fed7aa; font-weight: 900; }
     .fusion-event p { margin: 3px 0; color: var(--muted); }
     .fusion-event .score { color: var(--text); font-weight: 900; white-space: nowrap; }
+    .model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .model-card {
+      border: 1px solid var(--line);
+      background: var(--panel2);
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .model-card strong { display: block; margin: 8px 0 5px; }
+    .model-card .mini { color: var(--muted); font-size: 12px; line-height: 1.45; }
     .plot { width: 100%; height: 680px; }
     .plot.small { height: 500px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -224,7 +233,7 @@
       text-shadow: none !important;
     }
     @media (max-width: 980px) {
-      .hero, .grid.two, .grid.metrics, .pattern-list { grid-template-columns: 1fr; }
+      .hero, .grid.two, .grid.metrics, .pattern-list, .model-grid { grid-template-columns: 1fr; }
       .fusion-event { grid-template-columns: 1fr; }
       .plot { height: 560px; }
     }
@@ -321,23 +330,37 @@
     <section id="fusion" class="pane">
       <div class="card">
         <h3 style="margin-top:0">Astro + Index Fusion Evaluation</h3>
-        <p class="muted">Backtest kết hợp cảnh báo Astro với model Index hiện có. Điểm số dùng nến ngày UTC đã đóng; đúng trễ 1-3 ngày vẫn được tính một phần để phản ánh lag/pivot như yêu cầu.</p>
+        <p class="muted">Hệ dự báo riêng dùng các model kết hợp Astro + Index. Mỗi lần mở dashboard, hệ tự chấm lại các dự đoán đã qua theo nến ngày UTC đã đóng, xếp hạng lại model và chọn bộ active mạnh nhất cho từng tháng.</p>
+        <div class="toolbar">
+          <label>Fusion year <select id="fusionYear"></select></label>
+          <label>Fusion month <select id="fusionMonth"></select></label>
+          <label>Direction <select id="fusionDirection"><option>All</option><option>up</option><option>down</option><option>sideway</option><option>volatility</option><option>trap</option></select></label>
+          <label>Min model score <input id="fusionThreshold" type="number" min="0.36" max="0.95" step="0.01" value="0.36"></label>
+          <label>Model set <select id="fusionSet"><option value="active">Active monthly</option><option value="all">All qualifying</option><option value="standby">Standby</option></select></label>
+        </div>
+        <div id="fusionChart" class="plot small"></div>
         <div id="fusionMetrics" class="score-grid"></div>
         <div id="fusionNotes" class="fusion-note"></div>
+        <div id="fusionScoreboard"></div>
+        <div id="fusionCalls"></div>
       </div>
       <div class="grid two" style="margin-top:16px">
         <div class="card">
-          <h3 style="margin-top:0">Combined rule ranking</h3>
-          <div id="fusionRules"></div>
+          <h3 style="margin-top:0">Active Fusion models for selected month</h3>
+          <div class="model-grid" id="fusionActiveModels"></div>
         </div>
         <div class="card">
-          <h3 style="margin-top:0">Recent evaluated events</h3>
-          <div id="fusionEvents"></div>
+          <h3 style="margin-top:0">Standby / replacement models</h3>
+          <div class="model-grid" id="fusionStandbyModels"></div>
         </div>
       </div>
       <div class="card" style="margin-top:16px">
-        <h3 style="margin-top:0">Forward fusion watchlist</h3>
-        <div id="fusionFuture"></div>
+        <h3 style="margin-top:0">Fusion model evaluation table</h3>
+        <div id="fusionRules"></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h3 style="margin-top:0">Recent evaluated Fusion calls</h3>
+        <div id="fusionEvents"></div>
       </div>
     </section>
 
@@ -360,6 +383,12 @@
       latestMarketDate: null,
       staticMarketDate: null,
       fusion: null,
+      marketRowsCache: null,
+      marketRowsCacheLatest: null,
+      marketIndexCache: null,
+      outcomeCache: null,
+      indexFeatureCache: null,
+      indexPositionByDate: null,
     };
     const fmt = new Intl.NumberFormat("en-US");
     const pct = (value) => value == null || Number.isNaN(Number(value)) ? "-" : `${(Number(value) * 100).toFixed(1)}%`;
@@ -545,9 +574,14 @@
     }
 
     function indexFeature(date) {
+      if (!state.indexFeatureCache) state.indexFeatureCache = new Map();
+      if (state.indexFeatureCache.has(date)) return state.indexFeatureCache.get(date);
       const rows = state.data.indices || [];
-      const idx = rows.findIndex((row) => row.date === date);
-      if (idx < 0) return null;
+      if (!state.indexPositionByDate) {
+        state.indexPositionByDate = new Map(rows.map((row, index) => [row.date, index]));
+      }
+      const idx = state.indexPositionByDate.get(date);
+      if (idx == null || idx < 0) return null;
       const row = rows[idx];
       const prev = rows[idx - 1] || row;
       const prev2 = rows[idx - 2] || prev;
@@ -557,7 +591,7 @@
       const meAccel = meChange - (Number(prev.index_me) - Number(prev2.index_me));
       const gap = Number(row.index_BTC) - Number(row.index_me);
       const prevGap = Number(prev.index_BTC) - Number(prev.index_me);
-      return {
+      const feature = {
         row,
         btcChange,
         meChange,
@@ -570,23 +604,41 @@
         shock: Math.abs(btcChange) >= 18 || Math.abs(meChange) >= 18 || Math.abs(btcAccel) >= 18 || Math.abs(meAccel) >= 18,
         traderOverheat: Number(row.index_me) - Number(row.index_BTC) >= 22,
       };
+      state.indexFeatureCache.set(date, feature);
+      return feature;
+    }
+
+    function ensureMarketCaches() {
+      if (state.marketRowsCache && state.marketRowsCacheLatest === state.latestMarketDate) return;
+      state.marketRowsCache = (state.ohlcv || []).filter((row) => row.timestamp <= state.latestMarketDate);
+      state.marketIndexCache = new Map(state.marketRowsCache.map((row, index) => [row.timestamp, index]));
+      state.marketRowsCacheLatest = state.latestMarketDate;
+      state.outcomeCache = new Map();
     }
 
     function actualOutcomeForDate(date) {
-      const market = state.ohlcv.filter((row) => row.timestamp <= state.latestMarketDate);
-      const index = market.findIndex((row) => row.timestamp === date);
-      if (index < 0) return null;
+      ensureMarketCaches();
+      if (state.outcomeCache.has(date)) return state.outcomeCache.get(date);
+      const market = state.marketRowsCache || [];
+      const index = state.marketIndexCache?.get(date);
+      if (index == null || index < 0) {
+        state.outcomeCache.set(date, null);
+        return null;
+      }
       const baseRow = market[index];
       const base = Number(baseRow.close);
       const future = market.slice(index + 1, index + 4);
-      if (!future.length) return null;
+      if (!future.length) {
+        state.outcomeCache.set(date, null);
+        return null;
+      }
       const horizon = Math.min(3, future.length);
       const return3d = Number(future[horizon - 1].close) / base - 1;
       const rangeSlice = future.slice(0, Math.min(2, future.length));
       const range2d = Math.max(...rangeSlice.map((row) => Number(row.high))) / Math.min(...rangeSlice.map((row) => Number(row.low))) - 1;
       const dayReturn = Number(baseRow.close) / Number(baseRow.open) - 1;
       const wickRange = Number(baseRow.high) / Number(baseRow.low) - 1;
-      return {
+      const outcome = {
         actual: classifyOutcome(return3d, range2d),
         return3d,
         range2d,
@@ -596,6 +648,8 @@
         isFinal: horizon >= 3,
         volatilityHit: Math.abs(return3d) > 0.036 || range2d > 0.04 || Math.abs(dayReturn) > 0.04 || wickRange > 0.055,
       };
+      state.outcomeCache.set(date, outcome);
+      return outcome;
     }
 
     function scoreForecastOutcome(forecast, outcome) {
@@ -643,13 +697,13 @@
       return "wrong";
     }
 
-    function scoreForecastAtDate(forecast, date) {
+    function scoreForecastAtDate(forecast, date, options = {}) {
       const primary = actualOutcomeForDate(date);
-      if (!primary || !primary.isFinal) return null;
+      if (!primary || (!primary.isFinal && !options.provisional)) return null;
       let score = scoreForecastOutcome(forecast, primary);
       let outcome = primary;
       let delayed = false;
-      if (score === 0) {
+      if (score === 0 && primary.isFinal) {
         for (const lag of [1, 2, 3]) {
           const lagOutcome = actualOutcomeForDate(addDays(date, lag));
           if (!lagOutcome || !lagOutcome.isFinal) continue;
@@ -662,7 +716,8 @@
           if (score >= 0.75) break;
         }
       }
-      return { score, status: statusFromScore(score, delayed), outcome, delayed };
+      const status = primary.isFinal ? statusFromScore(score, delayed) : (score > 0 ? "partial" : "wrong");
+      return { score, status, outcome, delayed, provisional: !primary.isFinal };
     }
 
     const fusionRuleDefs = [
@@ -750,6 +805,76 @@
         forecast: "sideway",
         applies: ({ astro, scenarios, feature }) => astro && Number(astro.volatility) <= 38 && Number(astro.composite) >= 52 && Math.abs(feature?.gap || 0) <= 14 && scenarios.some((row) => row.forecast === "sideway" && Number(row.confidence) >= 0.36),
       },
+      {
+        id: "fusion_same_phase_favorable_pump",
+        name: "Same-phase favorable pump",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, feature }) => astro && feature?.samePhase && feature.btcChange > 0 && feature.meChange > 0 && Number(astro.composite) >= 64 && Number(astro.volatility) <= 55,
+      },
+      {
+        id: "fusion_btc_energy_leads_pump",
+        name: "BTC energy leads trader pump",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, feature }) => astro && feature && feature.btcChange >= 10 && feature.meChange <= 6 && feature.gap >= 8 && Number(astro.composite) >= 58 && Number(astro.volatility) < 62,
+      },
+      {
+        id: "fusion_green_breakout_confirmed",
+        name: "Green breakout confluence",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, scenarios, feature }) => astro && feature?.samePhase && feature.btcChange > 0 && Number(astro.composite) >= 62 && Number(astro.volatility) <= 50 && scenarios.some((row) => row.forecast === "up" && Number(row.confidence) >= 0.55),
+      },
+      {
+        id: "fusion_trader_overheat_trap",
+        name: "Trader overheat trap",
+        family: "Fusion",
+        forecast: "trap_up",
+        applies: ({ astro, feature }) => astro && feature?.traderOverheat && (astro.event || Number(astro.volatility) >= 52 || Number(astro.composite) < 55),
+      },
+      {
+        id: "fusion_btc_energy_collapse",
+        name: "BTC energy collapse",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, feature }) => astro && feature && feature.btcChange <= -12 && feature.btcAccel <= -8 && Number(astro.volatility) >= 45,
+      },
+      {
+        id: "fusion_red_breakdown_confirmed",
+        name: "Red breakdown confluence",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, scenarios, feature }) => astro && feature && feature.btcChange < 0 && (astro.regime === "high_risk" || Number(astro.volatility) >= 58) && scenarios.some((row) => row.forecast === "down" && Number(row.confidence) >= 0.50),
+      },
+      {
+        id: "fusion_cross_after_event_dump",
+        name: "Cross after event dump",
+        family: "Fusion",
+        forecast: "risk_down",
+        applies: ({ astro, feature }) => astro && feature?.crossed && (astro.event || Number(astro.volatility) >= 60) && Number(astro.composite) < 62,
+      },
+      {
+        id: "fusion_dual_shock_volatility",
+        name: "Dual index shock volatility",
+        family: "Fusion",
+        forecast: "volatility",
+        applies: ({ astro, feature }) => astro && feature?.shock && Math.abs(feature.btcChange) >= 14 && Math.abs(feature.meChange) >= 14 && Number(astro.volatility) >= 45,
+      },
+      {
+        id: "fusion_opposite_phase_trap",
+        name: "Opposite-phase trap zone",
+        family: "Fusion",
+        forecast: "trap_up",
+        applies: ({ astro, feature, scenarios }) => astro && feature?.oppositePhase && Number(astro.volatility) >= 45 && scenarios.some((row) => row.forecast === "up" && Number(row.confidence) >= 0.45),
+      },
+      {
+        id: "fusion_low_vol_gap_sideway",
+        name: "Low-vol gap compression",
+        family: "Fusion",
+        forecast: "sideway",
+        applies: ({ astro, feature }) => astro && feature && Number(astro.volatility) <= 32 && Math.abs(feature.gap) <= 10 && Math.abs(feature.btcChange) <= 7 && Math.abs(feature.meChange) <= 7,
+      },
     ];
 
     function fusionContextForDate(date, maps) {
@@ -762,6 +887,80 @@
       };
     }
 
+    const FUSION_BACKTEST_START = "2024-01-01";
+    const FUSION_ACTIVE_LIMIT = 16;
+
+    function summarizeFusionHits(hits) {
+      const total = hits.length;
+      const score = hits.reduce((sum, row) => sum + row.score, 0);
+      const byStatus = hits.reduce((acc, row) => {
+        acc[row.status] = (acc[row.status] || 0) + 1;
+        return acc;
+      }, {});
+      return {
+        total,
+        accuracy: total ? score / total : 0,
+        correct: byStatus.correct || 0,
+        delayed: byStatus.delayed || 0,
+        partial: byStatus.partial || 0,
+        wrong: byStatus.wrong || 0,
+      };
+    }
+
+    function recentCutoff(days) {
+      const latest = state.latestMarketDate || FUSION_BACKTEST_START;
+      return addDays(latest, -days);
+    }
+
+    function forecastGroup(forecast) {
+      if (forecast === "risk_down") return "down";
+      if (forecast === "trap_up") return "trap";
+      return forecast;
+    }
+
+    function forecastMatchesDirection(forecast, direction) {
+      if (direction === "All") return true;
+      if (direction === "down") return forecast === "down" || forecast === "risk_down";
+      if (direction === "trap") return forecast === "trap_up";
+      return forecast === direction;
+    }
+
+    function rankScore(rule) {
+      const recent = rule.recent90Accuracy ?? rule.accuracy;
+      const sampleWeight = Math.min(1, rule.cases / 24);
+      return (rule.accuracy * 0.58 + recent * 0.32 + sampleWeight * 0.10);
+    }
+
+    function enrichFusionRule(rule, hits) {
+      const summary = summarizeFusionHits(hits);
+      const recent90Hits = hits.filter((row) => row.date >= recentCutoff(90));
+      const recent90 = summarizeFusionHits(recent90Hits);
+      const returns = hits.reduce((sum, row) => sum + row.outcome.return3d, 0);
+      const volHits = hits.filter((row) => row.outcome.volatilityHit).length;
+      const winning = hits
+        .filter((row) => row.score >= 0.5)
+        .slice(-8)
+        .map((row) => row.date)
+        .join(", ");
+      return {
+        ...rule,
+        cases: summary.total,
+        accuracy: summary.accuracy,
+        correct: summary.correct,
+        delayed: summary.delayed,
+        partial: summary.partial,
+        wrong: summary.wrong,
+        recent90Cases: recent90.total,
+        recent90Accuracy: recent90.accuracy,
+        averageReturn3d: summary.total ? returns / summary.total : 0,
+        volatilityHitRate: summary.total ? volHits / summary.total : 0,
+        rankScore: 0,
+        examples: hits.slice(-5).map((row) => row.date).join(", "),
+        winningExamples: winning || "-",
+        hits,
+      };
+    }
+
     function evaluateFusionRule(rule, dates, maps) {
       const hits = [];
       dates.forEach((date) => {
@@ -771,60 +970,48 @@
         if (!graded) return;
         hits.push({ date, ...graded, context });
       });
-      const cases = hits.length;
-      const score = hits.reduce((sum, row) => sum + row.score, 0);
-      const returns = hits.reduce((sum, row) => sum + row.outcome.return3d, 0);
-      const volHits = hits.filter((row) => row.outcome.volatilityHit).length;
-      return {
-        ...rule,
-        cases,
-        accuracy: cases ? score / cases : 0,
-        averageReturn3d: cases ? returns / cases : 0,
-        volatilityHitRate: cases ? volHits / cases : 0,
-        wrong: hits.filter((row) => row.status === "wrong").length,
-        examples: hits.slice(-5).map((row) => row.date).join(", "),
-        hits,
-      };
+      const enriched = enrichFusionRule(rule, hits);
+      enriched.rankScore = rankScore(enriched);
+      return enriched;
     }
 
     function buildFusionModel() {
       if (!state.astro?.length || !state.ohlcv?.length) return null;
       const maps = { astro: astroMap(), index: indexMap(), scenario: scenarioMap() };
       const closedDates = state.ohlcv
-        .filter((row) => row.timestamp <= state.latestMarketDate && maps.astro.has(row.timestamp))
+        .filter((row) => row.timestamp >= FUSION_BACKTEST_START && row.timestamp <= state.latestMarketDate && maps.astro.has(row.timestamp) && maps.index.has(row.timestamp))
         .map((row) => row.timestamp);
+      const finalDates = closedDates.filter((date) => actualOutcomeForDate(date)?.isFinal);
       const rules = fusionRuleDefs
-        .map((rule) => evaluateFusionRule(rule, closedDates, maps))
+        .map((rule) => evaluateFusionRule(rule, finalDates, maps))
         .filter((rule) => rule.cases > 0)
-        .sort((a, b) => (b.accuracy - a.accuracy) || (b.cases - a.cases));
-      const active = rules.filter((rule) => rule.cases >= 6 && rule.accuracy >= 0.36);
+        .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+      const fusionRules = rules.filter((rule) => rule.family === "Fusion");
+      const active = fusionRules.filter((rule) => rule.cases >= 6 && rule.accuracy >= 0.36).slice(0, FUSION_ACTIVE_LIMIT);
       const events = closedDates
         .map((date) => {
           const context = fusionContextForDate(date, maps);
-          const matches = rules
+          const matches = fusionRules
             .filter((rule) => rule.applies(context))
-            .sort((a, b) => (b.accuracy - a.accuracy) || (b.cases - a.cases));
+            .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
           if (!matches.length) return null;
-          const graded = scoreForecastAtDate(matches[0].forecast, date);
+          const graded = scoreForecastAtDate(matches[0].forecast, date, { provisional: true });
           if (!graded) return null;
           return { date, context, rule: matches[0], graded };
         })
         .filter(Boolean)
         .sort((a, b) => b.date.localeCompare(a.date));
-      const future = (state.data.scenario_forecasts || [])
-        .filter((row) => row.date > state.latestMarketDate)
-        .sort((a, b) => a.date.localeCompare(b.date))
-        .map((scenario) => {
-          const context = fusionContextForDate(scenario.date, maps);
-          const matches = active
-            .filter((rule) => rule.applies({ ...context, scenarios: [scenario, ...context.scenarios] }))
-            .sort((a, b) => (b.accuracy - a.accuracy) || (b.cases - a.cases));
-          if (!matches.length) return null;
-          return { scenario, context, rules: matches.slice(0, 3) };
-        })
-        .filter(Boolean)
-        .slice(0, 80);
-      return { rules, active, events, future, closedDates };
+      return {
+        rules,
+        fusionRules,
+        active,
+        events,
+        closedDates,
+        finalDates,
+        maps,
+        monthlyModelCache: new Map(),
+        walkForwardCache: new Map(),
+      };
     }
 
     function fusionScoreCard(label, summary, note) {
@@ -847,11 +1034,118 @@
     function bestFusionForScenario(scenario) {
       if (!state.fusion) state.fusion = buildFusionModel();
       if (!state.fusion) return null;
-      const maps = { astro: astroMap(), index: indexMap(), scenario: scenarioMap() };
-      const context = fusionContextForDate(scenario.date, maps);
+      const context = fusionContextForDate(scenario.date, state.fusion.maps);
       return state.fusion.active
         .filter((rule) => rule.applies({ ...context, scenarios: [scenario, ...context.scenarios] }))
-        .sort((a, b) => (b.accuracy - a.accuracy) || (b.cases - a.cases))[0] || null;
+        .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases))[0] || null;
+    }
+
+    function fusionModelSetForMonth(prefix, threshold = 0.36) {
+      if (!state.fusion) return { active: [], standby: [], all: [], trainingDates: [] };
+      if (!state.fusion.monthlyModelCache) state.fusion.monthlyModelCache = new Map();
+      const cacheKey = `${prefix}|${Number(threshold).toFixed(3)}`;
+      if (state.fusion.monthlyModelCache.has(cacheKey)) return state.fusion.monthlyModelCache.get(cacheKey);
+      const targetStart = `${prefix}-01`;
+      const trainingDates = state.fusion.finalDates.filter((date) => date < targetStart);
+      const scored = fusionRuleDefs
+        .filter((rule) => rule.family === "Fusion")
+        .map((rule) => evaluateFusionRule(rule, trainingDates, state.fusion.maps))
+        .filter((rule) => rule.cases > 0)
+        .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+      const qualifying = scored.filter((rule) => rule.cases >= 6 && rule.accuracy >= threshold);
+      const active = qualifying.slice(0, FUSION_ACTIVE_LIMIT).map((rule, index) => ({ ...rule, monthlyRank: index + 1, monthlyStatus: "active" }));
+      const activeIds = new Set(active.map((rule) => rule.id));
+      const standby = scored
+        .filter((rule) => !activeIds.has(rule.id))
+        .map((rule, index) => ({ ...rule, monthlyRank: index + 1, monthlyStatus: "standby" }));
+      const result = { active, standby, all: qualifying, scored, trainingDates };
+      state.fusion.monthlyModelCache.set(cacheKey, result);
+      return result;
+    }
+
+    function selectedFusionPrefix() {
+      const year = document.getElementById("fusionYear")?.value;
+      const month = String(document.getElementById("fusionMonth")?.value || "1").padStart(2, "0");
+      return `${year}-${month}`;
+    }
+
+    function fusionDatesForMonth(prefix) {
+      return (state.data.indices || [])
+        .filter((row) => row.date >= FUSION_BACKTEST_START && row.date.startsWith(prefix))
+        .map((row) => row.date)
+        .filter((date) => state.fusion?.maps.astro.has(date));
+    }
+
+    function fusionCallsForMonth(prefix, options = {}) {
+      if (!state.fusion) return [];
+      const direction = options.direction || "All";
+      const threshold = Number(options.threshold ?? 0.36);
+      const modelSetName = options.modelSet || "active";
+      const modelSet = fusionModelSetForMonth(prefix, threshold);
+      const rules = (modelSetName === "standby" ? modelSet.standby : modelSetName === "all" ? modelSet.all : modelSet.active)
+        .filter((rule) => rule.cases >= 6 && rule.accuracy >= threshold);
+      return fusionDatesForMonth(prefix)
+        .map((date) => {
+          const context = fusionContextForDate(date, state.fusion.maps);
+          const applicable = rules
+            .filter((rule) => forecastMatchesDirection(rule.forecast, direction) && rule.applies(context))
+            .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+          if (!applicable.length) return null;
+          const rule = applicable[0];
+          const graded = scoreForecastAtDate(rule.forecast, date, { provisional: true });
+          return {
+            date,
+            rule,
+            forecast: rule.forecast,
+            confidence: rule.accuracy,
+            support: applicable.slice(1, 4),
+            context,
+            graded,
+            status: graded?.status || "pending",
+            actual: graded?.outcome?.actual || "pending",
+            score: graded?.score ?? null,
+            return3d: graded?.outcome?.return3d,
+            provisional: Boolean(graded?.provisional),
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    function fusionWalkForwardCalls(threshold = 0.36) {
+      if (!state.fusion) return [];
+      if (!state.fusion.walkForwardCache) state.fusion.walkForwardCache = new Map();
+      const cacheKey = Number(threshold).toFixed(3);
+      if (state.fusion.walkForwardCache.has(cacheKey)) return state.fusion.walkForwardCache.get(cacheKey);
+      const months = [...new Set((state.data.indices || [])
+        .filter((row) => row.date >= FUSION_BACKTEST_START && row.date <= state.latestMarketDate)
+        .map((row) => row.date.slice(0, 7)))]
+        .sort();
+      const calls = months.flatMap((prefix) => fusionCallsForMonth(prefix, {
+        direction: "All",
+        threshold,
+        modelSet: "active",
+      }));
+      state.fusion.walkForwardCache.set(cacheKey, calls);
+      return calls;
+    }
+
+    function summarizeFusionCalls(calls) {
+      const evaluated = calls.filter((call) => call.score != null);
+      const score = evaluated.reduce((sum, call) => sum + call.score, 0);
+      const byStatus = evaluated.reduce((acc, call) => {
+        acc[call.status] = (acc[call.status] || 0) + 1;
+        return acc;
+      }, {});
+      return {
+        total: evaluated.length,
+        accuracy: evaluated.length ? score / evaluated.length : 0,
+        correct: byStatus.correct || 0,
+        delayed: byStatus.delayed || 0,
+        partial: byStatus.partial || 0,
+        wrong: byStatus.wrong || 0,
+        pending: calls.filter((call) => call.status === "pending").length,
+      };
     }
 
     function mergeLiveOhlcv(staticRows, liveRows) {
@@ -871,6 +1165,16 @@
         });
       }
       return [...merged.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    }
+
+    function resetDerivedCaches() {
+      state.marketRowsCache = null;
+      state.marketRowsCacheLatest = null;
+      state.marketIndexCache = null;
+      state.outcomeCache = null;
+      state.indexFeatureCache = null;
+      state.indexPositionByDate = null;
+      state.fusion = null;
     }
 
     function populateSelect(select, values, selected) {
@@ -908,6 +1212,9 @@
       const preferredYear = state.latestMarketDate?.slice(0, 4) || scenarioYears[0];
       populateSelect(document.getElementById("futureYear"), scenarioYears, scenarioYears.includes(preferredYear) ? preferredYear : scenarioYears[0]);
       updateFutureMonths();
+      const fusionYears = [...new Set(state.data.indices.filter((row) => row.date >= FUSION_BACKTEST_START).map((row) => row.date.slice(0, 4)))].sort();
+      populateSelect(document.getElementById("fusionYear"), fusionYears, fusionYears.includes(preferredYear) ? preferredYear : fusionYears[0]);
+      updateFusionMonths();
     }
 
     function updateHistMonths() {
@@ -922,6 +1229,14 @@
       const months = [...new Set(rows.map((row) => Number(row.date.slice(5, 7))))].sort((a, b) => a - b);
       const preferredMonth = Number(state.latestMarketDate?.slice(5, 7));
       populateSelect(document.getElementById("futureMonth"), months, months.includes(preferredMonth) ? preferredMonth : months[0]);
+    }
+
+    function updateFusionMonths() {
+      const year = document.getElementById("fusionYear").value;
+      const rows = state.data.indices.filter((row) => row.date >= FUSION_BACKTEST_START && row.date.startsWith(year));
+      const months = [...new Set(rows.map((row) => Number(row.date.slice(5, 7))))].sort((a, b) => a - b);
+      const preferredMonth = Number(state.latestMarketDate?.slice(5, 7));
+      populateSelect(document.getElementById("fusionMonth"), months, months.includes(preferredMonth) ? preferredMonth : months[0]);
     }
 
     function renderPriceChart() {
@@ -1036,14 +1351,19 @@
         document.getElementById("fusionNotes").innerHTML = "Astro data hoặc market data chưa sẵn sàng để đánh giá Fusion.";
         document.getElementById("fusionRules").innerHTML = `<p class="muted">No fusion data.</p>`;
         document.getElementById("fusionEvents").innerHTML = `<p class="muted">No evaluated events.</p>`;
-        document.getElementById("fusionFuture").innerHTML = `<p class="muted">No forward fusion watchlist.</p>`;
+        document.getElementById("fusionCalls").innerHTML = `<p class="muted">No Fusion calls.</p>`;
         return;
       }
-      const best = model.rules[0];
-      const bestFusion = model.rules.find((rule) => rule.family === "Fusion") || best;
-      const astroRules = model.rules.filter((rule) => rule.family === "Astro");
-      const indexRules = model.rules.filter((rule) => rule.family === "Index");
-      const activeRules = model.active;
+      const prefix = selectedFusionPrefix();
+      const direction = document.getElementById("fusionDirection").value;
+      const threshold = Number(document.getElementById("fusionThreshold").value);
+      const modelSetName = document.getElementById("fusionSet").value;
+      const monthSet = fusionModelSetForMonth(prefix, threshold);
+      const calls = fusionCallsForMonth(prefix, { direction, threshold, modelSet: modelSetName });
+      const allWalkForwardCalls = fusionWalkForwardCalls(threshold);
+      const selectedSummary = summarizeFusionCalls(calls);
+      const allSummary = summarizeFusionCalls(allWalkForwardCalls);
+      const bestFusion = monthSet.active[0] || model.fusionRules[0];
       const summarizeFamily = (rules) => {
         const cases = rules.reduce((sum, rule) => sum + rule.cases, 0);
         const score = rules.reduce((sum, rule) => sum + rule.accuracy * rule.cases, 0);
@@ -1051,53 +1371,132 @@
       };
 
       document.getElementById("fusionMetrics").innerHTML = [
-        fusionScoreCard("Best combined rule", bestFusion, `${bestFusion?.name || "-"} | ${bestFusion?.cases || 0} cases`),
-        fusionScoreCard("Astro-only layer", summarizeFamily(astroRules), `${astroRules.length} rules | ${summarizeFamily(astroRules).cases} cases`),
-        fusionScoreCard("Index-only layer", summarizeFamily(indexRules), `${indexRules.length} rules | ${summarizeFamily(indexRules).cases} cases`),
-        fusionScoreCard("Rules allowed for forward use", summarizeFamily(activeRules), `${activeRules.length} rules pass >=36% and >=6 cases`),
+        fusionScoreCard("Walk-forward Fusion calls", allSummary, `${allSummary.total} evaluated from 2024 | pending ${allSummary.pending}`),
+        fusionScoreCard(`${prefix} Fusion calls`, selectedSummary, `${selectedSummary.total} evaluated | pending ${selectedSummary.pending}`),
+        fusionScoreCard("Active monthly models", summarizeFamily(monthSet.active), `${monthSet.active.length} active | ${monthSet.standby.length} standby`),
+        fusionScoreCard("Best active model", bestFusion, `${bestFusion?.name || "-"} | rank score ${pct(bestFusion?.rankScore || 0)}`),
       ].join("");
 
+      const trainingStart = monthSet.trainingDates[0] || "-";
+      const trainingEnd = monthSet.trainingDates.at(-1) || "-";
       document.getElementById("fusionNotes").innerHTML = `
-        <strong>Method:</strong> rule được chấm bằng nến ngày UTC đã đóng, horizon 3 ngày. Volatility hit cần move 3D >3.6%, range 2D >4%, hoặc nến/wick 1D lớn; sideway vẫn giữ chuẩn range 2D <=2%.
-        Nếu biến động xảy ra trễ 1-3 ngày, điểm được gắn trạng thái delayed.
-        Forward watchlist chỉ dùng rule có ít nhất 6 mẫu lịch sử và accuracy từ 36% trở lên; các rule được xếp hạng lại mỗi lần dữ liệu BTC/index/Astro được refresh.
+        <strong>Fusion method:</strong> tháng <b>${prefix}</b> dùng ${monthSet.trainingDates.length} ngày training trước tháng đó (${trainingStart} → ${trainingEnd}) để chọn active models.
+        Khi nến ngày UTC mới đóng, live OHLCV làm các call đã qua được chấm lại, scoreboard và thứ hạng model tự cập nhật.
+        Volatility hit cần move 3D >3.6%, range 2D >4%, hoặc nến/wick 1D lớn; sideway giữ chuẩn range 2D <=2%.
       `;
 
-      document.getElementById("fusionRules").innerHTML = table(model.rules.slice(0, 18), [
-        ["family", "Layer"],
+      const indexRows = state.data.indices.filter((row) => row.date.startsWith(prefix));
+      const forecastColors = { up: "#22c55e", down: "#ef4444", risk_down: "#ef4444", trap_up: "#eab308", sideway: "#e5e7eb", volatility: "#f7931a" };
+      Plotly.newPlot("fusionChart", [
+        { type: "scatter", mode: "lines+markers", name: "index_BTC", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_BTC), line: { color: "#f7931a", width: 3 } },
+        { type: "scatter", mode: "lines+markers", name: "index_me", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_me), line: { color: "#60a5fa", width: 3 } },
+        { type: "scatter", mode: "markers", name: "Fusion call", x: calls.map(r => r.date), y: calls.map(r => r.context.index?.index_BTC ?? 50), text: calls.map(r => `${r.rule.name}<br>${r.forecast} ${pct(r.confidence)}<br>${r.status}`), marker: { color: calls.map(r => forecastColors[r.forecast] || "#fff"), size: 14, symbol: "diamond", line: { color: "#fff", width: 1 } } },
+      ], {
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: "#f8fafc" },
+        hovermode: "x unified", legend: { orientation: "h" },
+        hoverlabel: { bgcolor: "#0b0b0b", bordercolor: "#f7931a", font: { color: "#f8fafc", size: 13 } },
+        xaxis: { gridcolor: "rgba(255,255,255,.08)", showspikes: true, spikecolor: "rgba(255,255,255,.66)", spikemode: "across" },
+        yaxis: { title: "Index", range: [0, 100], gridcolor: "rgba(255,255,255,.08)" },
+        margin: { l: 52, r: 24, t: 24, b: 38 },
+      }, { responsive: true, displaylogo: false });
+
+      const callScoreCard = (label, rows) => {
+        const summary = summarizeFusionCalls(rows);
+        return `
+          <div class="score-card">
+            <div class="label">${label}</div>
+            <div class="value">${pct(summary.accuracy)}</div>
+            <div class="mini">${summary.total} evaluated | OK ${summary.correct} | +/- ${summary.delayed} | partial ${summary.partial} | wrong ${summary.wrong} | pending ${summary.pending}</div>
+            <div class="bar"><span style="width:${Math.round(summary.accuracy * 100)}%"></span></div>
+          </div>
+        `;
+      };
+      const groupedCalls = [
+        ["All walk-forward calls", allWalkForwardCalls],
+        [`${prefix} selected calls`, calls],
+        ["Pump fusion", calls.filter((call) => call.forecast === "up")],
+        ["Dump / risk-down fusion", calls.filter((call) => call.forecast === "down" || call.forecast === "risk_down")],
+        ["Trap / volatility fusion", calls.filter((call) => call.forecast === "trap_up" || call.forecast === "volatility")],
+      ];
+      ["80-100% confidence", "66-79% confidence", "55-65% confidence", "45-54% confidence", "36-44% confidence"].forEach((bucket) => {
+        const rows = allWalkForwardCalls.filter((call) => confidenceBucket(call.confidence) === bucket);
+        if (rows.length) groupedCalls.push([bucket, rows]);
+      });
+      document.getElementById("fusionScoreboard").innerHTML = `
+        <div class="score-grid">
+          ${groupedCalls.filter(([, rows]) => rows.length).map(([label, rows]) => callScoreCard(label, rows)).join("")}
+        </div>
+      `;
+
+      const colors = { pending: "#fff", correct: "#22c55e", wrong: "#ef4444", partial: "#86efac", delayed: "#eab308" };
+      const icons = { pending: "?", correct: "OK", wrong: "X", partial: "~", delayed: "+/-" };
+      document.getElementById("fusionCalls").innerHTML = calls.length ? calls.map((call) => `
+        <div class="scenario" style="border-left-color:${colors[call.status] || "#fff"}">
+          <div class="icon" style="color:${colors[call.status] || "#fff"}">${icons[call.status] || "?"}</div>
+          <div>
+            <h4>${call.date} <span class="tag ${call.forecast}">${call.forecast}</span> <span class="tag ${call.status}">${call.status}${call.provisional ? " / provisional" : ""}</span></h4>
+            <p>Primary model: <b>${call.rule.name}</b> | model score <b>${pct(call.rule.accuracy)}</b> from <b>${call.rule.cases}</b> historical cases | rank score <b>${pct(call.rule.rankScore)}</b>.</p>
+            <p>Astro: ${astroText(call.context.astro)} | Index gap: <b>${call.context.feature ? call.context.feature.gap.toFixed(1) : "-"}</b>${call.context.feature?.oppositePhase ? " | opposite phase" : ""}${call.context.feature?.shock ? " | shock" : ""}</p>
+            <p>Supporting models: ${call.support.length ? call.support.map((rule) => `${rule.name} ${pct(rule.accuracy)}`).join(" | ") : "-"}</p>
+            <p>Similar correct/partial dates for primary model: ${call.rule.winningExamples || "-"}</p>
+          </div>
+          <div class="muted">${call.return3d == null ? "" : pct(call.return3d)}</div>
+        </div>
+      `).join("") : `<div class="warn">No Fusion call reaches the selected filters for ${prefix}.</div>`;
+
+      const modelCard = (rule) => `
+        <div class="model-card">
+          <span class="tag ${rule.forecast}">${rule.forecast}</span>
+          <span class="tag">rank #${rule.monthlyRank || "-"}</span>
+          <strong>${rule.name}</strong>
+          <div class="mini">${rule.cases} train cases | accuracy ${pct(rule.accuracy)} | recent90 ${pct(rule.recent90Accuracy)} | rank score ${pct(rule.rankScore)}</div>
+        </div>
+      `;
+      document.getElementById("fusionActiveModels").innerHTML = monthSet.active.length ? monthSet.active.slice(0, FUSION_ACTIVE_LIMIT).map(modelCard).join("") : `<div class="warn">Not enough prior training data to activate Fusion models for ${prefix}.</div>`;
+      document.getElementById("fusionStandbyModels").innerHTML = monthSet.standby.length ? monthSet.standby.slice(0, FUSION_ACTIVE_LIMIT).map(modelCard).join("") : `<p class="muted">No standby models.</p>`;
+
+      const activeIds = new Set(monthSet.active.map((rule) => rule.id));
+      const tableRows = model.fusionRules.map((rule) => {
+        const monthStats = summarizeFusionHits(rule.hits.filter((hit) => hit.date.startsWith(prefix)));
+        return {
+          ...rule,
+          monthlyStatus: activeIds.has(rule.id) ? "active" : "standby",
+          selectedMonthCases: monthStats.total,
+          selectedMonthAccuracy: monthStats.accuracy,
+        };
+      }).sort((a, b) => (Number(activeIds.has(b.id)) - Number(activeIds.has(a.id))) || (b.rankScore - a.rankScore));
+      document.getElementById("fusionRules").innerHTML = table(tableRows, [
+        ["monthlyStatus", "Set"],
         ["name", "Rule"],
         ["forecast", "Forecast"],
         ["cases", "Cases"],
         ["accuracy", "Accuracy", pct],
+        ["recent90Accuracy", "Recent 90d", pct],
+        ["selectedMonthCases", `${prefix} cases`],
+        ["selectedMonthAccuracy", `${prefix} accuracy`, pct],
+        ["rankScore", "Rank score", pct],
         ["averageReturn3d", "Avg 3d", pct],
         ["volatilityHitRate", "Vol hit", pct],
         ["wrong", "Wrong"],
-        ["examples", "Recent examples"],
+        ["winningExamples", "Similar winning dates"],
       ]);
 
-      document.getElementById("fusionEvents").innerHTML = model.events.slice(0, 18).map((event) => {
+      const recentEvents = allWalkForwardCalls.filter((call) => call.score != null).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 18);
+      document.getElementById("fusionEvents").innerHTML = recentEvents.length ? recentEvents.map((event) => {
         const scenario = event.context.scenarios[0];
         const astro = event.context.astro;
         return `
           <div class="fusion-event">
             <div class="date">${event.date}</div>
             <div>
-              <p><strong>${event.rule.name}</strong> <span class="tag ${event.rule.forecast}">${event.rule.forecast}</span> <span class="tag ${event.graded.status}">${event.graded.status}</span></p>
+              <p><strong>${event.rule.name}</strong> <span class="tag ${event.forecast}">${event.forecast}</span> <span class="tag ${event.status}">${event.status}${event.provisional ? " / provisional" : ""}</span></p>
               <p>Astro: ${astroText(astro)}</p>
-              <p>Index: ${scenario ? `${scenario.forecast} ${pct(scenario.confidence)} from ${scenario.matches} analogs` : "No scenario call"} | Actual: ${event.graded.outcome.actual}</p>
+              <p>Index: ${scenario ? `${scenario.forecast} ${pct(scenario.confidence)} from ${scenario.matches} analogs` : "No scenario call"} | Actual: ${event.actual}</p>
             </div>
-            <div class="score">${pct(event.graded.outcome.return3d)}</div>
+            <div class="score">${pct(event.return3d)}</div>
           </div>
         `;
-      }).join("") || `<p class="muted">No evaluated fusion events yet.</p>`;
-
-      document.getElementById("fusionFuture").innerHTML = model.future.length ? table(model.future, [
-        ["date", "Date", (value, row) => row.scenario.date],
-        ["scenario", "Index call", (_, row) => `${row.scenario.forecast} ${pct(row.scenario.confidence)} (${row.scenario.matches})`],
-        ["astro", "Astro", (_, row) => astroText(row.context.astro)],
-        ["rules", "Fusion rules", (_, row) => row.rules.map((rule) => `${rule.name} ${pct(rule.accuracy)} / ${rule.cases}`).join("<br>")],
-        ["similar", "Similar dates", (_, row) => row.scenario.similar_dates || "-"],
-      ]) : `<div class="warn">No forward Fusion rule passes the current eligibility filters after ${state.latestMarketDate}.</div>`;
+      }).join("") : `<p class="muted">No evaluated fusion events yet.</p>`;
     }
 
     function renderPatterns() {
@@ -1145,7 +1544,12 @@
           document.querySelectorAll(".pane").forEach((item) => item.classList.remove("active"));
           button.classList.add("active");
           document.getElementById(button.dataset.pane).classList.add("active");
-          setTimeout(() => { renderPriceChart(); renderFusion(); renderFuture(); }, 30);
+          const pane = button.dataset.pane;
+          setTimeout(() => {
+            if (pane === "charts") renderPriceChart();
+            if (pane === "future") renderFuture();
+            if (pane === "fusion") renderFusion();
+          }, 30);
         });
       });
       document.getElementById("histYear").addEventListener("change", () => { updateHistMonths(); renderPriceChart(); });
@@ -1155,6 +1559,11 @@
       document.getElementById("futureMonth").addEventListener("change", renderFuture);
       document.getElementById("futureDirection").addEventListener("change", renderFuture);
       document.getElementById("futureThreshold").addEventListener("input", renderFuture);
+      document.getElementById("fusionYear").addEventListener("change", () => { updateFusionMonths(); renderFusion(); });
+      document.getElementById("fusionMonth").addEventListener("change", renderFusion);
+      document.getElementById("fusionDirection").addEventListener("change", renderFusion);
+      document.getElementById("fusionThreshold").addEventListener("input", renderFusion);
+      document.getElementById("fusionSet").addEventListener("change", renderFusion);
     }
 
     async function load() {
@@ -1186,12 +1595,11 @@
       state.staticMarketDate = state.data.meta.latest_market_date;
       state.latestMarketDate = state.ohlcv.at(-1)?.timestamp || state.data.meta.latest_market_date;
       state.data.meta.latest_market_date = state.latestMarketDate;
+      resetDerivedCaches();
       renderMetrics();
       initSelectors();
       bindEvents();
       renderPriceChart();
-      renderFusion();
-      renderFuture();
       renderPatterns();
       renderTables();
     }
