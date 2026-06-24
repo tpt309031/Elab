@@ -101,6 +101,26 @@
     }
     select:focus, input:focus { border-color: rgba(247,147,26,.7); }
     iframe { width: 100%; height: 460px; border: 0; border-radius: 16px; background: #111; }
+    .astro-card { padding: 0; overflow: hidden; }
+    .astro-intro {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(90deg, rgba(247,147,26,.12), rgba(255,255,255,.025));
+    }
+    .astro-intro h3 { margin: 0 0 4px; }
+    .astro-intro p { margin: 0; color: var(--muted); font-size: 13px; }
+    .astro-frame {
+      display: block;
+      width: 100%;
+      height: min(1280px, calc(100vh + 420px));
+      min-height: 1040px;
+      border-radius: 0 0 18px 18px;
+      background: #f4f6f8;
+    }
     .plot { width: 100%; height: 680px; }
     .plot.small { height: 500px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -205,6 +225,7 @@
       <button class="tab active" data-pane="charts">Charts</button>
       <button class="tab" data-pane="future">Future</button>
       <button class="tab" data-pane="patterns">Patterns</button>
+      <button class="tab" data-pane="astro">Astro</button>
       <button class="tab" data-pane="research">Research Tables</button>
     </nav>
 
@@ -254,6 +275,19 @@
           <h3>Unused watchlist</h3>
           <div class="pattern-list" id="unusedPatterns"></div>
         </div>
+      </div>
+    </section>
+
+    <section id="astro" class="pane">
+      <div class="card astro-card">
+        <div class="astro-intro">
+          <div>
+            <h3>Bitcoin Astro Scores</h3>
+            <p>Module astro mới đã được nhúng vào Elab. Khoảng xem bắt đầu từ mốc hiện tại của dữ liệu và vẫn giữ nguyên cảnh báo, đánh dấu, kiểu chart của hệ thống mới.</p>
+          </div>
+          <span class="tag">2017-2028</span>
+        </div>
+        <iframe class="astro-frame" title="Bitcoin Astro Scores" src="/astro.html"></iframe>
       </div>
     </section>
 
