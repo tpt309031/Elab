@@ -25,14 +25,26 @@ function normalizeRows(rows, timeframe) {
 
 async function fetchBinance(timeframe, startMs) {
   const interval = INTERVALS[timeframe].binance;
-  const url = new URL("https://api.binance.com/api/v3/klines");
-  url.searchParams.set("symbol", "BTCUSDT");
-  url.searchParams.set("interval", interval);
-  url.searchParams.set("startTime", String(startMs));
-  url.searchParams.set("limit", "1000");
-  const response = await fetch(url, { headers: { "user-agent": "btc-energy-dashboard" } });
-  if (!response.ok) throw new Error(`Binance ${response.status}`);
-  const data = await response.json();
+  const intervalMs = INTERVALS[timeframe].ms;
+  const maxPages = timeframe === "1d" ? 10 : 1;
+  const data = [];
+  let cursor = startMs;
+  for (let page = 0; page < maxPages; page += 1) {
+    const url = new URL("https://api.binance.com/api/v3/klines");
+    url.searchParams.set("symbol", "BTCUSDT");
+    url.searchParams.set("interval", interval);
+    url.searchParams.set("startTime", String(cursor));
+    url.searchParams.set("limit", "1000");
+    const response = await fetch(url, { headers: { "user-agent": "btc-energy-dashboard" } });
+    if (!response.ok) throw new Error(`Binance ${response.status}`);
+    const chunk = await response.json();
+    if (!Array.isArray(chunk) || chunk.length === 0) break;
+    data.push(...chunk);
+    const lastOpen = Number(chunk[chunk.length - 1][0]);
+    const nextCursor = lastOpen + intervalMs;
+    if (chunk.length < 1000 || nextCursor <= cursor || nextCursor + intervalMs > Date.now()) break;
+    cursor = nextCursor;
+  }
   return normalizeRows(
     data.map((item) => ({
       timestamp: item[0],
