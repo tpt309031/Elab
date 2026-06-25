@@ -31,9 +31,7 @@
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     header {
-      position: sticky;
-      top: 0;
-      z-index: 10;
+      position: relative;
       border-bottom: 1px solid var(--line);
       background: rgba(5, 5, 5, .82);
       backdrop-filter: blur(14px);
@@ -70,15 +68,72 @@
     .metric .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }
     .metric .value { margin-top: 8px; font-size: 28px; font-weight: 800; }
     .metric .note { margin-top: 4px; color: var(--muted); font-size: 12px; }
-    .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0; }
+    .menu-toggle {
+      position: fixed;
+      top: 18px;
+      right: 18px;
+      z-index: 40;
+      border: 1px solid rgba(247,147,26,.55);
+      background: rgba(5,5,5,.88);
+      color: #fed7aa;
+      border-radius: 7px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font-weight: 900;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      backdrop-filter: blur(12px);
+    }
+    .menu-scrim {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      background: rgba(0,0,0,.45);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .18s ease;
+    }
+    .menu-scrim.open { opacity: 1; pointer-events: auto; }
+    .tabs {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 41;
+      width: min(320px, calc(100vw - 34px));
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 76px 18px 18px;
+      margin: 0;
+      border-left: 1px solid var(--line);
+      background: rgba(5,5,5,.96);
+      box-shadow: -24px 0 80px rgba(0,0,0,.45);
+      transform: translateX(105%);
+      transition: transform .20s ease;
+      backdrop-filter: blur(18px);
+    }
+    .tabs.open { transform: translateX(0); }
+    .tabs::before {
+      content: "Navigate";
+      position: absolute;
+      top: 24px;
+      left: 18px;
+      color: var(--btc);
+      font-weight: 900;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
     .tab {
       border: 1px solid var(--line);
       background: rgba(255,255,255,.04);
       color: var(--text);
       border-radius: 8px;
-      padding: 10px 14px;
+      padding: 12px 14px;
       cursor: pointer;
       font-weight: 700;
+      text-align: left;
     }
     .tab.active { border-color: rgba(247,147,26,.75); background: rgba(247,147,26,.15); color: #ffedd5; }
     .pane { display: none; }
@@ -228,6 +283,30 @@
       padding: 12px 14px;
       margin: 12px 0;
     }
+    .report-panel {
+      margin-top: 16px;
+      overflow: hidden;
+    }
+    .report-panel > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      cursor: pointer;
+      color: #fed7aa;
+      font-weight: 900;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      list-style: none;
+    }
+    .report-panel > summary::-webkit-details-marker { display: none; }
+    .report-panel > summary::after {
+      content: "▾";
+      color: var(--btc);
+      transition: transform .16s ease;
+    }
+    .report-panel[open] > summary::after { transform: rotate(180deg); }
+    .report-panel .report-body { margin-top: 14px; }
     .fusion-topline {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -313,11 +392,13 @@
       </div>
     </div>
   </header>
+  <button class="menu-toggle" id="menuToggle" type="button" aria-expanded="false" aria-controls="sectionMenu">Menu</button>
+  <div class="menu-scrim" id="menuScrim"></div>
 
   <main>
     <section class="grid metrics" id="metrics"></section>
 
-    <nav class="tabs">
+    <nav class="tabs" id="sectionMenu" aria-label="Section menu">
       <button class="tab active" data-pane="charts">Charts</button>
       <button class="tab" data-pane="future">Future</button>
       <button class="tab" data-pane="patterns">Patterns</button>
@@ -353,13 +434,18 @@
           <label>Min confidence <input id="futureThreshold" type="number" min="0.36" max="0.95" step="0.01" value="0.36"></label>
         </div>
         <div id="futureChart" class="plot small"></div>
-        <div id="confidenceScoreboard"></div>
-        <div id="futureNotes"></div>
+        <details class="report-panel">
+          <summary>Future scenario reports</summary>
+          <div class="report-body">
+            <div id="confidenceScoreboard"></div>
+            <div id="futureNotes"></div>
+          </div>
+        </details>
       </div>
-      <div class="card" style="margin-top:16px">
-        <h3>Top ranked pattern calls</h3>
-        <div id="registryCalls"></div>
-      </div>
+      <details class="card report-panel">
+        <summary>Top ranked pattern calls</summary>
+        <div class="report-body" id="registryCalls"></div>
+      </details>
     </section>
 
     <section id="patterns" class="pane">
@@ -384,7 +470,12 @@
           </div>
           <span class="tag">2017-2028</span>
         </div>
-        <iframe class="astro-frame" title="Bitcoin Astro Scores" src="/astro.html"></iframe>
+        <details class="report-panel">
+          <summary>Open Astro chart and report</summary>
+          <div class="report-body">
+            <iframe class="astro-frame" title="Bitcoin Astro Scores" src="/astro.html"></iframe>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -417,10 +508,15 @@
           <label><input type="checkbox" id="fusionLayerFusion" checked> Fusion calls</label>
         </div>
         <div id="fusionChart" class="plot"></div>
-        <div id="fusionMetrics" class="score-grid"></div>
-        <div id="fusionNotes" class="fusion-note"></div>
-        <div id="fusionScoreboard"></div>
-        <div id="fusionCalls"></div>
+        <details class="report-panel">
+          <summary>Fusion forecast reports</summary>
+          <div class="report-body">
+            <div id="fusionMetrics" class="score-grid"></div>
+            <div id="fusionNotes" class="fusion-note"></div>
+            <div id="fusionScoreboard"></div>
+            <div id="fusionCalls"></div>
+          </div>
+        </details>
       </div>
       <div class="viz-grid">
         <div class="card">
@@ -435,27 +531,37 @@
         </div>
       </div>
       <div class="grid two" style="margin-top:16px">
-        <div class="card">
-          <h3 style="margin-top:0">Active Fusion models for selected month</h3>
+        <details class="card report-panel">
+          <summary>Active Fusion models for selected month</summary>
+          <div class="report-body">
           <div class="model-grid" id="fusionActiveModels"></div>
-        </div>
-        <div class="card">
-          <h3 style="margin-top:0">Standby / replacement models</h3>
+          </div>
+        </details>
+        <details class="card report-panel">
+          <summary>Standby / replacement models</summary>
+          <div class="report-body">
           <div class="model-grid" id="fusionStandbyModels"></div>
-        </div>
+          </div>
+        </details>
       </div>
-      <div class="card" style="margin-top:16px">
-        <h3 style="margin-top:0">Fusion model evaluation table</h3>
+      <details class="card report-panel">
+        <summary>Fusion model evaluation table</summary>
+        <div class="report-body">
         <div id="fusionRules"></div>
-      </div>
-      <div class="card" style="margin-top:16px">
-        <h3 style="margin-top:0">Pattern detail</h3>
+        </div>
+      </details>
+      <details class="card report-panel">
+        <summary>Pattern detail</summary>
+        <div class="report-body">
         <div id="fusionDetail" class="fusion-detail">Click một model hoặc forecast call để xem chi tiết mẫu hình, ngày tương tự và cách nó được chấm điểm.</div>
-      </div>
-      <div class="card" style="margin-top:16px">
-        <h3 style="margin-top:0">Recent evaluated Fusion calls</h3>
+        </div>
+      </details>
+      <details class="card report-panel">
+        <summary>Recent evaluated Fusion calls</summary>
+        <div class="report-body">
         <div id="fusionEvents"></div>
-      </div>
+        </div>
+      </details>
     </section>
 
     <section id="research" class="pane">
@@ -1860,13 +1966,28 @@
       ]);
     }
 
+    function setMenuOpen(open) {
+      const menu = document.getElementById("sectionMenu");
+      const button = document.getElementById("menuToggle");
+      const scrim = document.getElementById("menuScrim");
+      menu?.classList.toggle("open", open);
+      scrim?.classList.toggle("open", open);
+      button?.setAttribute("aria-expanded", String(open));
+    }
+
     function bindEvents() {
+      document.getElementById("menuToggle").addEventListener("click", () => {
+        setMenuOpen(!document.getElementById("sectionMenu").classList.contains("open"));
+      });
+      document.getElementById("menuScrim").addEventListener("click", () => setMenuOpen(false));
       document.querySelectorAll(".tab").forEach((button) => {
         button.addEventListener("click", () => {
           document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
           document.querySelectorAll(".pane").forEach((item) => item.classList.remove("active"));
           button.classList.add("active");
           document.getElementById(button.dataset.pane).classList.add("active");
+          setMenuOpen(false);
+          if (typeof window !== "undefined" && window.scrollTo) window.scrollTo({ top: 0, behavior: "smooth" });
           const pane = button.dataset.pane;
           setTimeout(() => {
             if (pane === "charts") renderPriceChart();
