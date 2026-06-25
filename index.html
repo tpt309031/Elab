@@ -343,6 +343,129 @@
     }
     .layer-toggle input { width: auto; padding: 0; accent-color: var(--btc); }
     .viz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+    .fusion-calendar {
+      margin: 16px 0 4px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.025);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .calendar-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(90deg, rgba(247,147,26,.12), rgba(255,255,255,.025));
+    }
+    .calendar-title strong { color: #ffedd5; }
+    .calendar-title span { color: var(--muted); font-size: 12px; }
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+    }
+    .calendar-head {
+      padding: 9px 8px;
+      text-align: center;
+      color: #fed7aa;
+      background: rgba(247,147,26,.08);
+      border-bottom: 1px solid var(--line);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+    }
+    .calendar-cell {
+      min-height: 124px;
+      padding: 9px;
+      border-left: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.03);
+      color: #e5e7eb;
+    }
+    .calendar-cell:nth-child(7n + 1) { border-left: 0; }
+    .calendar-cell.empty {
+      background: rgba(255,255,255,.012);
+      color: transparent;
+    }
+    .calendar-cell.no-call {
+      color: #9ca3af;
+      background: rgba(255,255,255,.025);
+    }
+    .calendar-day {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      font-weight: 900;
+    }
+    .calendar-day span:last-child {
+      color: inherit;
+      opacity: .72;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .calendar-pred {
+      margin-top: 9px;
+      font-weight: 950;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .calendar-meta {
+      margin-top: 5px;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .calendar-rule {
+      margin-top: 6px;
+      font-size: 11px;
+      line-height: 1.35;
+      opacity: .84;
+    }
+    .calendar-cell.up {
+      background: #dcfce7;
+      color: #052e16;
+    }
+    .calendar-cell.up.correct {
+      background: #22c55e;
+      color: #031b0c;
+    }
+    .calendar-cell.up.wrong {
+      background: linear-gradient(180deg, #dcfce7 0 50%, #ef4444 50% 100%);
+      color: #111827;
+    }
+    .calendar-cell.sideway {
+      background: #fef9c3;
+      color: #3f3007;
+    }
+    .calendar-cell.sideway.correct {
+      background: #fb923c;
+      color: #231000;
+    }
+    .calendar-cell.sideway.wrong {
+      background: linear-gradient(180deg, #fef9c3 0 50%, #ef4444 50% 100%);
+      color: #111827;
+    }
+    .calendar-cell.down {
+      background: #fee2e2;
+      color: #450a0a;
+    }
+    .calendar-cell.down.correct {
+      background: #ef4444;
+      color: #fff7f7;
+    }
+    .calendar-cell.down.wrong {
+      background: linear-gradient(180deg, #fee2e2 0 50%, #991b1b 50% 100%);
+      color: #fff7f7;
+    }
+    .calendar-cell.delayed {
+      box-shadow: inset 0 0 0 2px #eab308;
+    }
+    .calendar-cell.pending {
+      opacity: .88;
+    }
     .fusion-detail {
       border: 1px solid rgba(247,147,26,.28);
       background: rgba(247,147,26,.055);
@@ -376,6 +499,12 @@
       .plot { height: 560px; }
       .plot.small, .plot.mini { height: 420px; }
       main, .wrap { padding: 16px; }
+      .calendar-cell { min-height: 112px; padding: 7px; }
+      .calendar-title { align-items: flex-start; flex-direction: column; }
+    }
+    @media (max-width: 680px) {
+      .fusion-calendar { overflow-x: auto; }
+      .calendar-grid { min-width: 720px; }
     }
   </style>
 </head>
@@ -466,7 +595,7 @@
         <div class="astro-intro">
           <div>
             <h3>Bitcoin Astro Scores</h3>
-            <p>Module astro mới dùng cùng theme với Elab, xem theo năm, tháng bắt đầu và cửa sổ 1M/3M/6M. Các cảnh báo, đánh dấu và kiểu chart của hệ Astro được giữ lại.</p>
+            <p>The Astro module uses the Elab dark theme with year, month, and 1M/3M/6M range views. Astro warnings, markers, and chart style are preserved.</p>
           </div>
           <span class="tag">2017-2028</span>
         </div>
@@ -485,7 +614,7 @@
           <div>
             <span class="tag">Fusion Lab</span>
             <h3 style="margin-top:8px">Astro + Index Decision Lab</h3>
-            <p class="muted">Fusion chỉ dự báo 3 trạng thái chính: <b>up</b>, <b>down</b>, <b>sideway</b>. Volatility, shock, phase, gap và astro event chỉ là feature để chấm điểm/rank model.</p>
+            <p class="muted">Fusion forecasts only three main states: <b>up</b>, <b>down</b>, and <b>sideway</b>. Volatility, shock, phase, gap, and astro events are features used to score and rank models.</p>
           </div>
           <div class="outcome-strip">
             <div><strong class="tag up">UP</strong><span>3D return &gt; 3.6%</span></div>
@@ -508,6 +637,7 @@
           <label><input type="checkbox" id="fusionLayerFusion" checked> Fusion calls</label>
         </div>
         <div id="fusionChart" class="plot"></div>
+        <div id="fusionCalendar" class="fusion-calendar"></div>
         <details class="report-panel">
           <summary>Fusion forecast reports</summary>
           <div class="report-body">
@@ -521,12 +651,12 @@
       <div class="viz-grid">
         <div class="card">
           <h3 style="margin-top:0">Outcome correlation heatmap</h3>
-          <p class="muted">Tương quan feature Fusion với outcome 3D trên backtest từ 2024.</p>
+          <p class="muted">Fusion feature correlation against 3D outcomes in the walk-forward backtest from 2024.</p>
           <div id="fusionHeatmap" class="plot mini"></div>
         </div>
         <div class="card">
           <h3 style="margin-top:0">Scenario probability distribution</h3>
-          <p class="muted">Phân phối tín hiệu và độ chính xác theo up/down/sideway trong cửa sổ đang chọn.</p>
+          <p class="muted">Signal distribution and accuracy by up/down/sideway for the selected window.</p>
           <div id="fusionDistribution" class="plot mini"></div>
         </div>
       </div>
@@ -553,7 +683,7 @@
       <details class="card report-panel">
         <summary>Pattern detail</summary>
         <div class="report-body">
-        <div id="fusionDetail" class="fusion-detail">Click một model hoặc forecast call để xem chi tiết mẫu hình, ngày tương tự và cách nó được chấm điểm.</div>
+        <div id="fusionDetail" class="fusion-detail">Click a model or forecast call to inspect the pattern, similar dates, and scoring logic.</div>
         </div>
       </details>
       <details class="card report-panel">
@@ -1375,6 +1505,71 @@
         .sort((a, b) => a.date.localeCompare(b.date));
     }
 
+    function dailyMoveForDate(date) {
+      const row = (state.ohlcv || []).find((item) => item.timestamp === date);
+      if (!row || !Number(row.open)) return null;
+      return {
+        row,
+        move: Number(row.close) / Number(row.open) - 1,
+      };
+    }
+
+    function renderFusionCalendar(prefix, calls) {
+      const target = document.getElementById("fusionCalendar");
+      if (!target) return;
+      const start = parse(`${prefix}-01`);
+      if (!start || Number.isNaN(start.getTime())) {
+        target.innerHTML = "";
+        return;
+      }
+      const end = new Date(start);
+      end.setUTCMonth(end.getUTCMonth() + 1);
+      const dayCount = Math.round((end - start) / 86400000);
+      const leadingBlanks = start.getUTCDay();
+      const callByDate = new Map((calls || []).map((call) => [call.date, call]));
+      const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const cells = [];
+      for (let index = 0; index < leadingBlanks; index += 1) {
+        cells.push(`<div class="calendar-cell empty" aria-hidden="true"></div>`);
+      }
+      for (let day = 1; day <= dayCount; day += 1) {
+        const date = `${prefix}-${String(day).padStart(2, "0")}`;
+        const call = callByDate.get(date);
+        const daily = dailyMoveForDate(date);
+        const prediction = call ? forecastGroup(call.forecast) : "no-call";
+        const status = call ? (call.status || "pending") : "no-call";
+        const statusClass = call ? `${prediction} ${status}` : "no-call";
+        const actual = call ? (call.actual || "pending") : "-";
+        const confidence = call ? pct(call.confidence) : "-";
+        const move = daily ? pct(daily.move) : "-";
+        const ruleName = call?.rule?.name || "No Fusion call";
+        const scoreText = call?.score == null ? "" : ` | score ${pct(call.score)}`;
+        const provisional = call?.provisional ? " / provisional" : "";
+        cells.push(`
+          <div class="calendar-cell ${statusClass}" ${call ? `onclick="showFusionRuleDetail('${call.rule.id}')"` : ""}>
+            <div class="calendar-day"><span>${day}</span><span>${date}</span></div>
+            <div class="calendar-pred">${prediction === "no-call" ? "No call" : prediction}</div>
+            <div class="calendar-meta">Move: <b>${move}</b></div>
+            <div class="calendar-meta">Actual: <b>${actual}</b></div>
+            <div class="calendar-meta">Eval: <b>${status}${provisional}</b>${scoreText}</div>
+            <div class="calendar-rule">${ruleName}${call ? ` | confidence ${confidence}` : ""}</div>
+          </div>
+        `);
+      }
+      const evaluated = calls.filter((call) => call.score != null).length;
+      const pending = calls.filter((call) => call.status === "pending").length;
+      target.innerHTML = `
+        <div class="calendar-title">
+          <strong>Fusion monthly forecast calendar - ${prefix}</strong>
+          <span>${calls.length} calls | ${evaluated} evaluated | ${pending} pending | day move = daily open-to-close return</span>
+        </div>
+        <div class="calendar-grid">
+          ${weekdays.map((day) => `<div class="calendar-head">${day}</div>`).join("")}
+          ${cells.join("")}
+        </div>
+      `;
+    }
+
     function fusionWalkForwardCalls(threshold = 0.36) {
       if (!state.fusion) return [];
       if (!state.fusion.walkForwardCache) state.fusion.walkForwardCache = new Map();
@@ -1529,7 +1724,7 @@
       target.innerHTML = `
         <h4>${rule.name} <span class="tag ${forecastGroup(rule.forecast)}">${forecastGroup(rule.forecast)}</span></h4>
         <p>Rank score <b>${pct(rule.rankScore)}</b> | Accuracy <b>${pct(rule.accuracy)}</b> | Cases <b>${rule.cases}</b> | Volatility feature hit <b>${pct(rule.volatilityHitRate)}</b>.</p>
-        <p class="muted">Volatility ở đây chỉ là feature phụ để đánh giá môi trường; outcome vẫn là ${forecastGroup(rule.forecast)}.</p>
+        <p class="muted">Volatility is only an environment feature here; the forecast outcome remains ${forecastGroup(rule.forecast)}.</p>
         ${recent.length ? table(recent.map((hit) => ({
           date: hit.date,
           status: hit.status,
@@ -1746,11 +1941,12 @@
       state.fusion = model;
       if (!model) {
         document.getElementById("fusionMetrics").innerHTML = "";
-        document.getElementById("fusionNotes").innerHTML = "Astro data hoặc market data chưa sẵn sàng để đánh giá Fusion.";
+        document.getElementById("fusionNotes").innerHTML = "Astro data or market data is not ready for Fusion evaluation.";
         document.getElementById("fusionRules").innerHTML = `<p class="muted">No fusion data.</p>`;
         document.getElementById("fusionEvents").innerHTML = `<p class="muted">No evaluated events.</p>`;
         document.getElementById("fusionCalls").innerHTML = `<p class="muted">No Fusion calls.</p>`;
         document.getElementById("fusionDetail").innerHTML = "No fusion data.";
+        document.getElementById("fusionCalendar").innerHTML = "";
         return;
       }
       const window = selectedFusionWindow();
@@ -1760,6 +1956,7 @@
       const modelSetName = document.getElementById("fusionSet").value;
       const monthSet = fusionModelSetForMonth(prefix, threshold);
       const calls = fusionCallsForWindow(window, { direction, threshold, modelSet: modelSetName });
+      const calendarCalls = fusionCallsForMonth(prefix, { direction, threshold, modelSet: modelSetName });
       const allWalkForwardCalls = fusionWalkForwardCalls(threshold);
       const selectedSummary = summarizeFusionCalls(calls);
       const allSummary = summarizeFusionCalls(allWalkForwardCalls);
@@ -1780,9 +1977,9 @@
       const trainingStart = monthSet.trainingDates[0] || "-";
       const trainingEnd = monthSet.trainingDates.at(-1) || "-";
       document.getElementById("fusionNotes").innerHTML = `
-        <strong>Fusion method:</strong> cửa sổ <b>${window.label}</b>, active model của tháng neo <b>${prefix}</b> dùng ${monthSet.trainingDates.length} ngày training trước tháng đó (${trainingStart} → ${trainingEnd}).
-        Khi nến ngày UTC mới đóng, live OHLCV làm các call đã qua được chấm lại, scoreboard và thứ hạng model tự cập nhật.
-        Outcome chỉ là up/down/sideway; sideway = |3D return| <= 1.5%. Volatility hit chỉ là feature phụ trong rank/model context.
+        <strong>Fusion method:</strong> selected window <b>${window.label}</b>; active models for anchor month <b>${prefix}</b> use ${monthSet.trainingDates.length} training days before that month (${trainingStart} -> ${trainingEnd}).
+        When a new UTC daily candle closes, live OHLCV regrades past calls, then scoreboards and model ranks update automatically.
+        Outcomes are up/down/sideway only; sideway = |3D return| <= 1.5%. Volatility hit is a secondary feature in the rank/model context.
       `;
 
       const indexRows = state.data.indices.filter((row) => isDateInWindow(row.date, window));
@@ -1823,6 +2020,7 @@
         yaxis2: { title: "Index / Astro", range: [0, 100], domain: [0, 0.34], gridcolor: "rgba(255,255,255,.08)" },
         margin: { l: 52, r: 24, t: 24, b: 38 },
       }, { responsive: true, displaylogo: false });
+      renderFusionCalendar(prefix, calendarCalls);
       renderFusionHeatmap(model);
       renderFusionDistribution(calls);
 
