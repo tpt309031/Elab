@@ -59,8 +59,8 @@
     .card {
       border: 1px solid var(--line);
       background: linear-gradient(180deg, rgba(21,21,21,.96), rgba(10,10,10,.92));
-      border-radius: 18px;
-      box-shadow: 0 24px 80px rgba(0,0,0,.25);
+      border-radius: 10px;
+      box-shadow: 0 18px 54px rgba(0,0,0,.22);
       padding: 16px;
     }
     .metric {
@@ -75,7 +75,7 @@
       border: 1px solid var(--line);
       background: rgba(255,255,255,.04);
       color: var(--text);
-      border-radius: 999px;
+      border-radius: 8px;
       padding: 10px 14px;
       cursor: pointer;
       font-weight: 700;
@@ -95,12 +95,12 @@
       color: var(--text);
       background: #0d0d0d;
       border: 1px solid var(--line);
-      border-radius: 10px;
+      border-radius: 6px;
       padding: 10px 12px;
       outline: none;
     }
     select:focus, input:focus { border-color: rgba(247,147,26,.7); }
-    iframe { width: 100%; height: 460px; border: 0; border-radius: 16px; background: #111; }
+    iframe { width: 100%; height: 460px; border: 0; border-radius: 10px; background: #111; }
     .astro-card { padding: 0; overflow: hidden; }
     .astro-intro {
       display: flex;
@@ -125,7 +125,7 @@
       border: 1px solid rgba(247,147,26,.30);
       background: linear-gradient(90deg, rgba(247,147,26,.10), rgba(255,255,255,.025));
       color: #fed7aa;
-      border-radius: 14px;
+      border-radius: 8px;
       padding: 12px 14px;
       margin: 12px 0;
       line-height: 1.55;
@@ -138,7 +138,7 @@
       align-items: start;
       border: 1px solid var(--line);
       background: rgba(255,255,255,.035);
-      border-radius: 14px;
+      border-radius: 8px;
       padding: 12px;
       margin: 10px 0;
     }
@@ -149,13 +149,17 @@
     .model-card {
       border: 1px solid var(--line);
       background: var(--panel2);
-      border-radius: 14px;
+      border-radius: 8px;
       padding: 12px;
+      cursor: pointer;
+      transition: border-color .16s ease, transform .16s ease, background .16s ease;
     }
+    .model-card:hover { border-color: rgba(247,147,26,.65); background: rgba(247,147,26,.07); transform: translateY(-1px); }
     .model-card strong { display: block; margin: 8px 0 5px; }
     .model-card .mini { color: var(--muted); font-size: 12px; line-height: 1.45; }
     .plot { width: 100%; height: 680px; }
     .plot.small { height: 500px; }
+    .plot.mini { height: 360px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { border-bottom: 1px solid var(--line); padding: 10px 8px; text-align: left; vertical-align: top; }
     th { color: #fed7aa; font-size: 11px; text-transform: uppercase; letter-spacing: .10em; }
@@ -164,7 +168,7 @@
     .tag {
       display: inline-flex;
       border: 1px solid var(--line);
-      border-radius: 999px;
+      border-radius: 6px;
       padding: 3px 8px;
       font-size: 12px;
       font-weight: 800;
@@ -184,7 +188,7 @@
       border: 1px solid var(--line);
       border-left-width: 5px;
       background: rgba(255,255,255,.035);
-      border-radius: 14px;
+      border-radius: 8px;
       padding: 12px;
       margin: 10px 0;
     }
@@ -200,7 +204,7 @@
     .score-card {
       border: 1px solid var(--line);
       background: linear-gradient(180deg, rgba(247,147,26,.08), rgba(255,255,255,.025));
-      border-radius: 16px;
+      border-radius: 8px;
       padding: 13px;
     }
     .score-card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .10em; }
@@ -212,7 +216,7 @@
     .pattern-item {
       border: 1px solid var(--line);
       background: var(--panel2);
-      border-radius: 14px;
+      border-radius: 8px;
       padding: 12px;
     }
     .pattern-item strong { display: block; margin-top: 8px; }
@@ -220,9 +224,63 @@
       border: 1px solid rgba(234,179,8,.35);
       background: rgba(234,179,8,.08);
       color: #fef3c7;
-      border-radius: 14px;
+      border-radius: 8px;
       padding: 12px 14px;
       margin: 12px 0;
+    }
+    .fusion-topline {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: start;
+      margin-bottom: 14px;
+    }
+    .fusion-topline h3 { margin: 8px 0 5px; }
+    .outcome-strip { display: grid; grid-template-columns: repeat(3, minmax(88px, 1fr)); gap: 8px; min-width: 320px; }
+    .outcome-strip div {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.035);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .outcome-strip strong { display: block; font-size: 18px; }
+    .outcome-strip span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+    .layer-toggle {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: -4px 0 14px;
+    }
+    .layer-toggle label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.035);
+      border-radius: 7px;
+      padding: 8px 10px;
+      letter-spacing: .06em;
+      cursor: pointer;
+    }
+    .layer-toggle input { width: auto; padding: 0; accent-color: var(--btc); }
+    .viz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+    .fusion-detail {
+      border: 1px solid rgba(247,147,26,.28);
+      background: rgba(247,147,26,.055);
+      border-radius: 8px;
+      padding: 13px;
+      min-height: 120px;
+    }
+    .fusion-detail h4 { margin: 0 0 8px; }
+    .chip-button {
+      border: 1px solid rgba(247,147,26,.45);
+      background: rgba(247,147,26,.10);
+      color: #fed7aa;
+      border-radius: 6px;
+      padding: 6px 8px;
+      cursor: pointer;
+      font-weight: 800;
+      margin-top: 8px;
     }
     .js-plotly-plot .hoverlayer .hovertext path {
       fill: rgba(11,11,11,.96) !important;
@@ -233,9 +291,12 @@
       text-shadow: none !important;
     }
     @media (max-width: 980px) {
-      .hero, .grid.two, .grid.metrics, .pattern-list, .model-grid { grid-template-columns: 1fr; }
+      .hero, .grid.two, .grid.metrics, .pattern-list, .model-grid, .fusion-topline, .viz-grid { grid-template-columns: 1fr; }
+      .outcome-strip { min-width: 0; grid-template-columns: 1fr; }
       .fusion-event { grid-template-columns: 1fr; }
       .plot { height: 560px; }
+      .plot.small, .plot.mini { height: 420px; }
+      main, .wrap { padding: 16px; }
     }
   </style>
 </head>
@@ -329,20 +390,49 @@
 
     <section id="fusion" class="pane">
       <div class="card">
-        <h3 style="margin-top:0">Astro + Index Fusion Evaluation</h3>
-        <p class="muted">Hệ dự báo riêng dùng các model kết hợp Astro + Index. Mỗi lần mở dashboard, hệ tự chấm lại các dự đoán đã qua theo nến ngày UTC đã đóng, xếp hạng lại model và chọn bộ active mạnh nhất cho từng tháng.</p>
+        <div class="fusion-topline">
+          <div>
+            <span class="tag">Fusion Lab</span>
+            <h3 style="margin-top:8px">Astro + Index Decision Lab</h3>
+            <p class="muted">Fusion chỉ dự báo 3 trạng thái chính: <b>up</b>, <b>down</b>, <b>sideway</b>. Volatility, shock, phase, gap và astro event chỉ là feature để chấm điểm/rank model.</p>
+          </div>
+          <div class="outcome-strip">
+            <div><strong class="tag up">UP</strong><span>3D return &gt; 3.6%</span></div>
+            <div><strong class="tag down">DOWN</strong><span>3D return &lt; -3.6%</span></div>
+            <div><strong class="tag sideway">SIDEWAY</strong><span>|3D return| &lt;= 1.5%</span></div>
+          </div>
+        </div>
         <div class="toolbar">
           <label>Fusion year <select id="fusionYear"></select></label>
           <label>Fusion month <select id="fusionMonth"></select></label>
-          <label>Direction <select id="fusionDirection"><option>All</option><option>up</option><option>down</option><option>sideway</option><option>volatility</option><option>trap</option></select></label>
+          <label>Range <select id="fusionRange"><option>1M</option><option>3M</option><option>6M</option></select></label>
+          <label>Direction <select id="fusionDirection"><option>All</option><option>up</option><option>down</option><option>sideway</option></select></label>
           <label>Min model score <input id="fusionThreshold" type="number" min="0.36" max="0.95" step="0.01" value="0.36"></label>
           <label>Model set <select id="fusionSet"><option value="active">Active monthly</option><option value="all">All qualifying</option><option value="standby">Standby</option></select></label>
         </div>
-        <div id="fusionChart" class="plot small"></div>
+        <div class="layer-toggle">
+          <label><input type="checkbox" id="fusionLayerPrice" checked> BTC price</label>
+          <label><input type="checkbox" id="fusionLayerIndex" checked> Index lines</label>
+          <label><input type="checkbox" id="fusionLayerAstro" checked> Astro score</label>
+          <label><input type="checkbox" id="fusionLayerFusion" checked> Fusion calls</label>
+        </div>
+        <div id="fusionChart" class="plot"></div>
         <div id="fusionMetrics" class="score-grid"></div>
         <div id="fusionNotes" class="fusion-note"></div>
         <div id="fusionScoreboard"></div>
         <div id="fusionCalls"></div>
+      </div>
+      <div class="viz-grid">
+        <div class="card">
+          <h3 style="margin-top:0">Outcome correlation heatmap</h3>
+          <p class="muted">Tương quan feature Fusion với outcome 3D trên backtest từ 2024.</p>
+          <div id="fusionHeatmap" class="plot mini"></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">Scenario probability distribution</h3>
+          <p class="muted">Phân phối tín hiệu và độ chính xác theo up/down/sideway trong cửa sổ đang chọn.</p>
+          <div id="fusionDistribution" class="plot mini"></div>
+        </div>
       </div>
       <div class="grid two" style="margin-top:16px">
         <div class="card">
@@ -357,6 +447,10 @@
       <div class="card" style="margin-top:16px">
         <h3 style="margin-top:0">Fusion model evaluation table</h3>
         <div id="fusionRules"></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h3 style="margin-top:0">Pattern detail</h3>
+        <div id="fusionDetail" class="fusion-detail">Click một model hoặc forecast call để xem chi tiết mẫu hình, ngày tương tự và cách nó được chấm điểm.</div>
       </div>
       <div class="card" style="margin-top:16px">
         <h3 style="margin-top:0">Recent evaluated Fusion calls</h3>
@@ -430,7 +524,7 @@
     function classifyOutcome(return3d, range2d) {
       if (return3d > 0.036) return "up";
       if (return3d < -0.036) return "down";
-      if (range2d <= 0.02) return "sideway";
+      if (Math.abs(return3d) <= 0.015) return "sideway";
       return "mixed";
     }
 
@@ -654,36 +748,20 @@
 
     function scoreForecastOutcome(forecast, outcome) {
       if (!outcome) return null;
-      if (forecast === "up") {
+      const normalized = forecastGroup(forecast);
+      if (normalized === "up") {
         if (outcome.actual === "up") return 1;
         if (outcome.actual === "mixed" && outcome.return3d > 0) return 0.5;
         return 0;
       }
-      if (forecast === "down") {
+      if (normalized === "down") {
         if (outcome.actual === "down") return 1;
         if (outcome.actual === "mixed" && outcome.return3d < 0) return 0.5;
         return 0;
       }
-      if (forecast === "sideway") {
+      if (normalized === "sideway") {
         if (outcome.actual === "sideway") return 1;
-        if (Math.abs(outcome.return3d) <= 0.018) return 0.5;
-        return 0;
-      }
-      if (forecast === "volatility") {
-        if (outcome.volatilityHit) return 1;
-        if (outcome.actual === "mixed") return 0.5;
-        return 0;
-      }
-      if (forecast === "risk_down") {
-        if (outcome.actual === "down") return 1;
-        if (outcome.volatilityHit && outcome.return3d <= 0) return 0.75;
-        if (outcome.actual === "sideway" || outcome.actual === "mixed") return 0.5;
-        return 0;
-      }
-      if (forecast === "trap_up") {
-        if (outcome.actual === "down") return 1;
-        if (outcome.volatilityHit && outcome.return3d <= 0) return 0.75;
-        if (outcome.actual === "sideway" || (outcome.actual === "mixed" && outcome.return3d <= 0.012)) return 0.5;
+        if (Math.abs(outcome.return3d) <= 0.022 && !outcome.volatilityHit) return 0.5;
         return 0;
       }
       return null;
@@ -725,15 +803,15 @@
         id: "astro_high_risk_dump",
         name: "Astro high-risk dump guard",
         family: "Astro",
-        forecast: "risk_down",
+        forecast: "down",
         applies: ({ astro }) => astro && (astro.regime === "high_risk" || Number(astro.volatility) >= 75),
       },
       {
-        id: "astro_event_volatility",
-        name: "Astro event volatility",
+        id: "astro_event_sideway",
+        name: "Astro event compression",
         family: "Astro",
-        forecast: "volatility",
-        applies: ({ astro }) => astro && (astro.event || Number(astro.volatility) >= 70),
+        forecast: "sideway",
+        applies: ({ astro }) => astro && (astro.event || Number(astro.volatility) >= 70) && Number(astro.composite) >= 45 && Number(astro.composite) <= 62,
       },
       {
         id: "astro_favorable_pump",
@@ -772,31 +850,45 @@
       },
       {
         id: "fusion_long_trap",
-        name: "Fusion long-trap warning",
+        name: "Long-trap resolves down",
         family: "Fusion",
-        forecast: "trap_up",
+        forecast: "down",
         applies: ({ astro, scenarios, feature }) => astro && scenarios.some((row) => row.forecast === "up" && Number(row.confidence) >= 0.45) && (astro.regime === "high_risk" || astro.event || Number(astro.volatility) >= 70 || feature?.traderOverheat),
       },
       {
-        id: "fusion_shock_event",
-        name: "Index shock + Astro event",
+        id: "fusion_shock_event_down",
+        name: "Shock event bearish release",
         family: "Fusion",
-        forecast: "volatility",
-        applies: ({ astro, feature }) => astro && feature?.shock && (astro.event || Number(astro.volatility) >= 60),
+        forecast: "down",
+        applies: ({ astro, feature }) => astro && feature?.shock && (feature.btcChange < 0 || Number(astro.composite) < 52) && (astro.event || Number(astro.volatility) >= 58),
       },
       {
-        id: "fusion_cross_high_vol",
-        name: "Energy cross + Astro volatility",
+        id: "fusion_shock_event_up",
+        name: "Shock event bullish release",
         family: "Fusion",
-        forecast: "volatility",
-        applies: ({ astro, feature }) => astro && feature?.crossed && Number(astro.volatility) >= 55,
+        forecast: "up",
+        applies: ({ astro, feature }) => astro && feature?.shock && feature.btcChange > 0 && Number(astro.composite) >= 56 && Number(astro.volatility) >= 45,
       },
       {
-        id: "fusion_opposite_phase",
-        name: "Opposite-phase instability",
+        id: "fusion_cross_down",
+        name: "Energy cross bearish",
         family: "Fusion",
-        forecast: "volatility",
-        applies: ({ astro, feature }) => astro && feature?.oppositePhase && (astro.event || Number(astro.volatility) >= 50),
+        forecast: "down",
+        applies: ({ astro, feature }) => astro && feature?.crossed && feature.gap < 0 && Number(astro.volatility) >= 48,
+      },
+      {
+        id: "fusion_cross_up",
+        name: "Energy cross bullish",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, feature }) => astro && feature?.crossed && feature.gap > 0 && Number(astro.composite) >= 54,
+      },
+      {
+        id: "fusion_opposite_phase_sideway",
+        name: "Opposite-phase compression",
+        family: "Fusion",
+        forecast: "sideway",
+        applies: ({ astro, feature }) => astro && feature?.oppositePhase && Math.abs(feature.gap) <= 18 && Number(astro.volatility) <= 62,
       },
       {
         id: "fusion_sideway_calm",
@@ -828,9 +920,9 @@
       },
       {
         id: "fusion_trader_overheat_trap",
-        name: "Trader overheat trap",
+        name: "Trader overheat reversal",
         family: "Fusion",
-        forecast: "trap_up",
+        forecast: "down",
         applies: ({ astro, feature }) => astro && feature?.traderOverheat && (astro.event || Number(astro.volatility) >= 52 || Number(astro.composite) < 55),
       },
       {
@@ -851,21 +943,28 @@
         id: "fusion_cross_after_event_dump",
         name: "Cross after event dump",
         family: "Fusion",
-        forecast: "risk_down",
+        forecast: "down",
         applies: ({ astro, feature }) => astro && feature?.crossed && (astro.event || Number(astro.volatility) >= 60) && Number(astro.composite) < 62,
       },
       {
-        id: "fusion_dual_shock_volatility",
-        name: "Dual index shock volatility",
+        id: "fusion_dual_shock_down",
+        name: "Dual shock bearish",
         family: "Fusion",
-        forecast: "volatility",
-        applies: ({ astro, feature }) => astro && feature?.shock && Math.abs(feature.btcChange) >= 14 && Math.abs(feature.meChange) >= 14 && Number(astro.volatility) >= 45,
+        forecast: "down",
+        applies: ({ astro, feature }) => astro && feature?.shock && Math.abs(feature.btcChange) >= 14 && Math.abs(feature.meChange) >= 14 && feature.btcChange < 0 && Number(astro.volatility) >= 45,
       },
       {
-        id: "fusion_opposite_phase_trap",
-        name: "Opposite-phase trap zone",
+        id: "fusion_dual_shock_up",
+        name: "Dual shock bullish",
         family: "Fusion",
-        forecast: "trap_up",
+        forecast: "up",
+        applies: ({ astro, feature }) => astro && feature?.shock && Math.abs(feature.btcChange) >= 14 && Math.abs(feature.meChange) >= 14 && feature.btcChange > 0 && Number(astro.composite) >= 54,
+      },
+      {
+        id: "fusion_opposite_phase_down",
+        name: "Opposite-phase downside",
+        family: "Fusion",
+        forecast: "down",
         applies: ({ astro, feature, scenarios }) => astro && feature?.oppositePhase && Number(astro.volatility) >= 45 && scenarios.some((row) => row.forecast === "up" && Number(row.confidence) >= 0.45),
       },
       {
@@ -874,6 +973,27 @@
         family: "Fusion",
         forecast: "sideway",
         applies: ({ astro, feature }) => astro && feature && Number(astro.volatility) <= 32 && Math.abs(feature.gap) <= 10 && Math.abs(feature.btcChange) <= 7 && Math.abs(feature.meChange) <= 7,
+      },
+      {
+        id: "fusion_gap_extreme_mean_revert_down",
+        name: "Gap extreme mean-revert down",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, feature }) => astro && feature && feature.gap <= -24 && Number(astro.composite) < 60 && Number(astro.volatility) >= 38,
+      },
+      {
+        id: "fusion_gap_extreme_catchup_up",
+        name: "Gap extreme catch-up up",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, feature }) => astro && feature && feature.gap >= 24 && Number(astro.composite) >= 54 && Number(astro.volatility) <= 68,
+      },
+      {
+        id: "fusion_flat_astro_index_box",
+        name: "Flat astro-index box",
+        family: "Fusion",
+        forecast: "sideway",
+        applies: ({ astro, feature, scenarios }) => astro && feature && Math.abs(feature.gap) <= 14 && Math.abs(feature.btcChange) <= 8 && Math.abs(feature.meChange) <= 8 && Number(astro.volatility) <= 42 && scenarios.some((row) => row.forecast === "sideway" && Number(row.confidence) >= 0.36),
       },
     ];
 
@@ -914,21 +1034,21 @@
 
     function forecastGroup(forecast) {
       if (forecast === "risk_down") return "down";
-      if (forecast === "trap_up") return "trap";
+      if (forecast === "trap_up") return "down";
+      if (forecast === "volatility") return "sideway";
       return forecast;
     }
 
     function forecastMatchesDirection(forecast, direction) {
       if (direction === "All") return true;
-      if (direction === "down") return forecast === "down" || forecast === "risk_down";
-      if (direction === "trap") return forecast === "trap_up";
-      return forecast === direction;
+      return forecastGroup(forecast) === direction;
     }
 
     function rankScore(rule) {
       const recent = rule.recent90Accuracy ?? rule.accuracy;
       const sampleWeight = Math.min(1, rule.cases / 24);
-      return (rule.accuracy * 0.58 + recent * 0.32 + sampleWeight * 0.10);
+      const volFit = rule.forecast === "sideway" ? (1 - (rule.volatilityHitRate || 0)) : Math.min(rule.volatilityHitRate || 0, 0.80);
+      return (rule.accuracy * 0.58 + recent * 0.30 + sampleWeight * 0.08 + volFit * 0.04);
     }
 
     function enrichFusionRule(rule, hits) {
@@ -1069,11 +1189,48 @@
       return `${year}-${month}`;
     }
 
+    function selectedFusionWindow() {
+      const prefix = selectedFusionPrefix();
+      const range = document.getElementById("fusionRange")?.value || "1M";
+      const months = { "1M": 1, "3M": 3, "6M": 6 }[range] || 1;
+      const anchor = parse(`${prefix}-01`);
+      const start = new Date(anchor);
+      if (months > 1) start.setUTCMonth(start.getUTCMonth() - months + 1);
+      const end = new Date(anchor);
+      end.setUTCMonth(end.getUTCMonth() + 1);
+      const prefixes = [];
+      const cursor = new Date(start);
+      while (cursor < end) {
+        prefixes.push(dateKey(cursor).slice(0, 7));
+        cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+      }
+      return {
+        prefix,
+        range,
+        months,
+        startKey: dateKey(start),
+        endKey: dateKey(end),
+        label: `${dateKey(start).slice(0, 7)} → ${prefix}`,
+        prefixes,
+      };
+    }
+
+    function isDateInWindow(date, window) {
+      return date >= window.startKey && date < window.endKey;
+    }
+
     function fusionDatesForMonth(prefix) {
       return (state.data.indices || [])
         .filter((row) => row.date >= FUSION_BACKTEST_START && row.date.startsWith(prefix))
         .map((row) => row.date)
         .filter((date) => state.fusion?.maps.astro.has(date));
+    }
+
+    function fusionCallsForWindow(window, options = {}) {
+      return window.prefixes
+        .flatMap((prefix) => fusionCallsForMonth(prefix, options))
+        .filter((call) => isDateInWindow(call.date, window))
+        .sort((a, b) => a.date.localeCompare(b.date));
     }
 
     function fusionCallsForMonth(prefix, options = {}) {
@@ -1146,6 +1303,141 @@
         wrong: byStatus.wrong || 0,
         pending: calls.filter((call) => call.status === "pending").length,
       };
+    }
+
+    function pearson(xs, ys) {
+      const pairs = xs.map((x, index) => [Number(x), Number(ys[index])]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+      if (pairs.length < 8) return 0;
+      const meanX = pairs.reduce((sum, [x]) => sum + x, 0) / pairs.length;
+      const meanY = pairs.reduce((sum, [, y]) => sum + y, 0) / pairs.length;
+      let numerator = 0;
+      let denomX = 0;
+      let denomY = 0;
+      pairs.forEach(([x, y]) => {
+        const dx = x - meanX;
+        const dy = y - meanY;
+        numerator += dx * dy;
+        denomX += dx * dx;
+        denomY += dy * dy;
+      });
+      return denomX && denomY ? numerator / Math.sqrt(denomX * denomY) : 0;
+    }
+
+    function fusionFeatureRows(model) {
+      if (!model) return [];
+      return model.finalDates
+        .map((date) => {
+          const outcome = actualOutcomeForDate(date);
+          if (!outcome || !["up", "down", "sideway"].includes(outcome.actual)) return null;
+          const context = fusionContextForDate(date, model.maps);
+          const feature = context.feature;
+          const astro = context.astro;
+          if (!feature || !astro) return null;
+          return {
+            date,
+            outcome: outcome.actual,
+            indexBTC: Number(feature.row.index_BTC),
+            indexMe: Number(feature.row.index_me),
+            gap: feature.gap,
+            btcSlope: feature.btcChange,
+            meSlope: feature.meChange,
+            btcAccel: feature.btcAccel,
+            astroComposite: Number(astro.composite),
+            astroVolatility: Number(astro.volatility),
+            samePhase: feature.samePhase ? 1 : 0,
+            oppositePhase: feature.oppositePhase ? 1 : 0,
+            shock: feature.shock ? 1 : 0,
+            crossed: feature.crossed ? 1 : 0,
+          };
+        })
+        .filter(Boolean);
+    }
+
+    function renderFusionHeatmap(model) {
+      const rows = fusionFeatureRows(model);
+      const featureDefs = [
+        ["indexBTC", "index BTC"],
+        ["indexMe", "index me"],
+        ["gap", "gap"],
+        ["btcSlope", "BTC slope"],
+        ["meSlope", "ME slope"],
+        ["btcAccel", "BTC accel"],
+        ["astroComposite", "astro comp"],
+        ["astroVolatility", "astro vol"],
+        ["samePhase", "same phase"],
+        ["oppositePhase", "opp phase"],
+        ["shock", "shock"],
+        ["crossed", "cross"],
+      ];
+      const outcomes = ["up", "down", "sideway"];
+      const z = outcomes.map((outcome) => {
+        const target = rows.map((row) => row.outcome === outcome ? 1 : 0);
+        return featureDefs.map(([key]) => Number(pearson(rows.map((row) => row[key]), target).toFixed(3)));
+      });
+      Plotly.newPlot("fusionHeatmap", [{
+        type: "heatmap",
+        x: featureDefs.map(([, label]) => label),
+        y: outcomes,
+        z,
+        zmin: -0.45,
+        zmax: 0.45,
+        colorscale: [
+          [0, "#ef4444"],
+          [0.5, "#111111"],
+          [1, "#22c55e"],
+        ],
+        hovertemplate: "%{y} vs %{x}<br>corr %{z:.3f}<extra></extra>",
+      }], {
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: "#f8fafc" },
+        xaxis: { gridcolor: "rgba(255,255,255,.06)" },
+        yaxis: { gridcolor: "rgba(255,255,255,.06)" },
+        margin: { l: 58, r: 18, t: 14, b: 78 },
+      }, { responsive: true, displaylogo: false });
+    }
+
+    function renderFusionDistribution(calls) {
+      const outcomes = ["up", "down", "sideway"];
+      const total = calls.length || 1;
+      const counts = outcomes.map((outcome) => calls.filter((call) => forecastGroup(call.forecast) === outcome).length);
+      const shares = counts.map((count) => count / total);
+      const accuracies = outcomes.map((outcome) => summarizeFusionCalls(calls.filter((call) => forecastGroup(call.forecast) === outcome)).accuracy);
+      Plotly.newPlot("fusionDistribution", [
+        { type: "bar", name: "Call share", x: outcomes, y: shares, text: counts.map((count) => `${count} calls`), marker: { color: ["#22c55e", "#ef4444", "#e5e7eb"] } },
+        { type: "scatter", mode: "lines+markers", name: "Accuracy", x: outcomes, y: accuracies, yaxis: "y2", line: { color: "#f7931a", width: 3 }, marker: { size: 9 } },
+      ], {
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: "#f8fafc" },
+        hovermode: "x unified", legend: { orientation: "h" },
+        hoverlabel: { bgcolor: "#0b0b0b", bordercolor: "#f7931a", font: { color: "#f8fafc", size: 13 } },
+        yaxis: { title: "Share", tickformat: ".0%", range: [0, Math.max(0.2, Math.max(...shares) * 1.25)], gridcolor: "rgba(255,255,255,.08)" },
+        yaxis2: { title: "Accuracy", overlaying: "y", side: "right", tickformat: ".0%", range: [0, 1], gridcolor: "rgba(255,255,255,0)" },
+        margin: { l: 48, r: 54, t: 14, b: 44 },
+      }, { responsive: true, displaylogo: false });
+    }
+
+    function showFusionRuleDetail(ruleId) {
+      if (!state.fusion) state.fusion = buildFusionModel();
+      const rule = state.fusion?.fusionRules.find((item) => item.id === ruleId);
+      const target = document.getElementById("fusionDetail");
+      if (!rule || !target) return;
+      const recent = rule.hits.slice(-10).reverse();
+      target.innerHTML = `
+        <h4>${rule.name} <span class="tag ${forecastGroup(rule.forecast)}">${forecastGroup(rule.forecast)}</span></h4>
+        <p>Rank score <b>${pct(rule.rankScore)}</b> | Accuracy <b>${pct(rule.accuracy)}</b> | Cases <b>${rule.cases}</b> | Volatility feature hit <b>${pct(rule.volatilityHitRate)}</b>.</p>
+        <p class="muted">Volatility ở đây chỉ là feature phụ để đánh giá môi trường; outcome vẫn là ${forecastGroup(rule.forecast)}.</p>
+        ${recent.length ? table(recent.map((hit) => ({
+          date: hit.date,
+          status: hit.status,
+          actual: hit.outcome.actual,
+          return3d: hit.outcome.return3d,
+          score: hit.score,
+        })), [
+          ["date", "Date"],
+          ["status", "Status"],
+          ["actual", "Actual"],
+          ["return3d", "3D", pct],
+          ["score", "Score", pct],
+        ]) : `<p class="muted">No evaluated examples yet.</p>`}
+      `;
     }
 
     function mergeLiveOhlcv(staticRows, liveRows) {
@@ -1352,14 +1644,16 @@
         document.getElementById("fusionRules").innerHTML = `<p class="muted">No fusion data.</p>`;
         document.getElementById("fusionEvents").innerHTML = `<p class="muted">No evaluated events.</p>`;
         document.getElementById("fusionCalls").innerHTML = `<p class="muted">No Fusion calls.</p>`;
+        document.getElementById("fusionDetail").innerHTML = "No fusion data.";
         return;
       }
-      const prefix = selectedFusionPrefix();
+      const window = selectedFusionWindow();
+      const prefix = window.prefix;
       const direction = document.getElementById("fusionDirection").value;
       const threshold = Number(document.getElementById("fusionThreshold").value);
       const modelSetName = document.getElementById("fusionSet").value;
       const monthSet = fusionModelSetForMonth(prefix, threshold);
-      const calls = fusionCallsForMonth(prefix, { direction, threshold, modelSet: modelSetName });
+      const calls = fusionCallsForWindow(window, { direction, threshold, modelSet: modelSetName });
       const allWalkForwardCalls = fusionWalkForwardCalls(threshold);
       const selectedSummary = summarizeFusionCalls(calls);
       const allSummary = summarizeFusionCalls(allWalkForwardCalls);
@@ -1372,7 +1666,7 @@
 
       document.getElementById("fusionMetrics").innerHTML = [
         fusionScoreCard("Walk-forward Fusion calls", allSummary, `${allSummary.total} evaluated from 2024 | pending ${allSummary.pending}`),
-        fusionScoreCard(`${prefix} Fusion calls`, selectedSummary, `${selectedSummary.total} evaluated | pending ${selectedSummary.pending}`),
+        fusionScoreCard(`${window.label} Fusion calls`, selectedSummary, `${selectedSummary.total} evaluated | pending ${selectedSummary.pending}`),
         fusionScoreCard("Active monthly models", summarizeFamily(monthSet.active), `${monthSet.active.length} active | ${monthSet.standby.length} standby`),
         fusionScoreCard("Best active model", bestFusion, `${bestFusion?.name || "-"} | rank score ${pct(bestFusion?.rankScore || 0)}`),
       ].join("");
@@ -1380,25 +1674,51 @@
       const trainingStart = monthSet.trainingDates[0] || "-";
       const trainingEnd = monthSet.trainingDates.at(-1) || "-";
       document.getElementById("fusionNotes").innerHTML = `
-        <strong>Fusion method:</strong> tháng <b>${prefix}</b> dùng ${monthSet.trainingDates.length} ngày training trước tháng đó (${trainingStart} → ${trainingEnd}) để chọn active models.
+        <strong>Fusion method:</strong> cửa sổ <b>${window.label}</b>, active model của tháng neo <b>${prefix}</b> dùng ${monthSet.trainingDates.length} ngày training trước tháng đó (${trainingStart} → ${trainingEnd}).
         Khi nến ngày UTC mới đóng, live OHLCV làm các call đã qua được chấm lại, scoreboard và thứ hạng model tự cập nhật.
-        Volatility hit cần move 3D >3.6%, range 2D >4%, hoặc nến/wick 1D lớn; sideway giữ chuẩn range 2D <=2%.
+        Outcome chỉ là up/down/sideway; sideway = |3D return| <= 1.5%. Volatility hit chỉ là feature phụ trong rank/model context.
       `;
 
-      const indexRows = state.data.indices.filter((row) => row.date.startsWith(prefix));
-      const forecastColors = { up: "#22c55e", down: "#ef4444", risk_down: "#ef4444", trap_up: "#eab308", sideway: "#e5e7eb", volatility: "#f7931a" };
-      Plotly.newPlot("fusionChart", [
-        { type: "scatter", mode: "lines+markers", name: "index_BTC", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_BTC), line: { color: "#f7931a", width: 3 } },
-        { type: "scatter", mode: "lines+markers", name: "index_me", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_me), line: { color: "#60a5fa", width: 3 } },
-        { type: "scatter", mode: "markers", name: "Fusion call", x: calls.map(r => r.date), y: calls.map(r => r.context.index?.index_BTC ?? 50), text: calls.map(r => `${r.rule.name}<br>${r.forecast} ${pct(r.confidence)}<br>${r.status}`), marker: { color: calls.map(r => forecastColors[r.forecast] || "#fff"), size: 14, symbol: "diamond", line: { color: "#fff", width: 1 } } },
-      ], {
+      const indexRows = state.data.indices.filter((row) => isDateInWindow(row.date, window));
+      const priceRows = state.ohlcv.filter((row) => isDateInWindow(row.timestamp, window));
+      const astroRows = state.astro.filter((row) => isDateInWindow(row.date, window));
+      const showPrice = document.getElementById("fusionLayerPrice")?.checked ?? true;
+      const showIndex = document.getElementById("fusionLayerIndex")?.checked ?? true;
+      const showAstro = document.getElementById("fusionLayerAstro")?.checked ?? true;
+      const showFusion = document.getElementById("fusionLayerFusion")?.checked ?? true;
+      const forecastColors = { up: "#22c55e", down: "#ef4444", sideway: "#e5e7eb" };
+      const traces = [];
+      if (showPrice) {
+        traces.push({ type: "scatter", mode: "lines", name: "BTC close", x: priceRows.map(r => r.timestamp), y: priceRows.map(r => r.close), yaxis: "y", line: { color: "#f8fafc", width: 2.2 } });
+      }
+      if (showIndex) {
+        traces.push({ type: "scatter", mode: "lines+markers", name: "index_BTC", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_BTC), yaxis: "y2", line: { color: "#f7931a", width: 3 } });
+        traces.push({ type: "scatter", mode: "lines+markers", name: "index_me", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_me), yaxis: "y2", line: { color: "#60a5fa", width: 3 } });
+      }
+      if (showAstro) {
+        traces.push({ type: "scatter", mode: "lines", name: "astro composite", x: astroRows.map(r => r.date), y: astroRows.map(r => r.composite), yaxis: "y2", line: { color: "#c084fc", width: 2, dash: "dot" } });
+        traces.push({ type: "scatter", mode: "markers", name: "astro event", x: astroRows.filter(r => r.event).map(r => r.date), y: astroRows.filter(r => r.event).map(() => 96), yaxis: "y2", marker: { color: "#facc15", size: 8, symbol: "x" } });
+      }
+      if (showFusion) {
+        traces.push({
+          type: "scatter", mode: "markers", name: "Fusion call", yaxis: "y2",
+          x: calls.map(r => r.date),
+          y: calls.map(r => r.context.index?.index_BTC ?? 50),
+          text: calls.map(r => `${r.rule.name}<br>${forecastGroup(r.forecast)} ${pct(r.confidence)}<br>${r.status}`),
+          marker: { color: calls.map(r => forecastColors[forecastGroup(r.forecast)] || "#fff"), size: 15, symbol: "diamond", line: { color: "#050505", width: 1 } },
+        });
+      }
+      Plotly.newPlot("fusionChart", traces, {
         paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: "#f8fafc" },
         hovermode: "x unified", legend: { orientation: "h" },
         hoverlabel: { bgcolor: "#0b0b0b", bordercolor: "#f7931a", font: { color: "#f8fafc", size: 13 } },
         xaxis: { gridcolor: "rgba(255,255,255,.08)", showspikes: true, spikecolor: "rgba(255,255,255,.66)", spikemode: "across" },
-        yaxis: { title: "Index", range: [0, 100], gridcolor: "rgba(255,255,255,.08)" },
+        yaxis: { title: "BTC-USDT", domain: [0.43, 1], gridcolor: "rgba(255,255,255,.08)" },
+        yaxis2: { title: "Index / Astro", range: [0, 100], domain: [0, 0.34], gridcolor: "rgba(255,255,255,.08)" },
         margin: { l: 52, r: 24, t: 24, b: 38 },
       }, { responsive: true, displaylogo: false });
+      renderFusionHeatmap(model);
+      renderFusionDistribution(calls);
 
       const callScoreCard = (label, rows) => {
         const summary = summarizeFusionCalls(rows);
@@ -1413,10 +1733,10 @@
       };
       const groupedCalls = [
         ["All walk-forward calls", allWalkForwardCalls],
-        [`${prefix} selected calls`, calls],
-        ["Pump fusion", calls.filter((call) => call.forecast === "up")],
-        ["Dump / risk-down fusion", calls.filter((call) => call.forecast === "down" || call.forecast === "risk_down")],
-        ["Trap / volatility fusion", calls.filter((call) => call.forecast === "trap_up" || call.forecast === "volatility")],
+        [`${window.label} selected calls`, calls],
+        ["Up fusion", calls.filter((call) => forecastGroup(call.forecast) === "up")],
+        ["Down fusion", calls.filter((call) => forecastGroup(call.forecast) === "down")],
+        ["Sideway fusion", calls.filter((call) => forecastGroup(call.forecast) === "sideway")],
       ];
       ["80-100% confidence", "66-79% confidence", "55-65% confidence", "45-54% confidence", "36-44% confidence"].forEach((bucket) => {
         const rows = allWalkForwardCalls.filter((call) => confidenceBucket(call.confidence) === bucket);
@@ -1431,10 +1751,10 @@
       const colors = { pending: "#fff", correct: "#22c55e", wrong: "#ef4444", partial: "#86efac", delayed: "#eab308" };
       const icons = { pending: "?", correct: "OK", wrong: "X", partial: "~", delayed: "+/-" };
       document.getElementById("fusionCalls").innerHTML = calls.length ? calls.map((call) => `
-        <div class="scenario" style="border-left-color:${colors[call.status] || "#fff"}">
+        <div class="scenario" style="border-left-color:${colors[call.status] || "#fff"}" onclick="showFusionRuleDetail('${call.rule.id}')">
           <div class="icon" style="color:${colors[call.status] || "#fff"}">${icons[call.status] || "?"}</div>
           <div>
-            <h4>${call.date} <span class="tag ${call.forecast}">${call.forecast}</span> <span class="tag ${call.status}">${call.status}${call.provisional ? " / provisional" : ""}</span></h4>
+            <h4>${call.date} <span class="tag ${forecastGroup(call.forecast)}">${forecastGroup(call.forecast)}</span> <span class="tag ${call.status}">${call.status}${call.provisional ? " / provisional" : ""}</span></h4>
             <p>Primary model: <b>${call.rule.name}</b> | model score <b>${pct(call.rule.accuracy)}</b> from <b>${call.rule.cases}</b> historical cases | rank score <b>${pct(call.rule.rankScore)}</b>.</p>
             <p>Astro: ${astroText(call.context.astro)} | Index gap: <b>${call.context.feature ? call.context.feature.gap.toFixed(1) : "-"}</b>${call.context.feature?.oppositePhase ? " | opposite phase" : ""}${call.context.feature?.shock ? " | shock" : ""}</p>
             <p>Supporting models: ${call.support.length ? call.support.map((rule) => `${rule.name} ${pct(rule.accuracy)}`).join(" | ") : "-"}</p>
@@ -1445,11 +1765,12 @@
       `).join("") : `<div class="warn">No Fusion call reaches the selected filters for ${prefix}.</div>`;
 
       const modelCard = (rule) => `
-        <div class="model-card">
-          <span class="tag ${rule.forecast}">${rule.forecast}</span>
+        <div class="model-card" onclick="showFusionRuleDetail('${rule.id}')">
+          <span class="tag ${forecastGroup(rule.forecast)}">${forecastGroup(rule.forecast)}</span>
           <span class="tag">rank #${rule.monthlyRank || "-"}</span>
           <strong>${rule.name}</strong>
           <div class="mini">${rule.cases} train cases | accuracy ${pct(rule.accuracy)} | recent90 ${pct(rule.recent90Accuracy)} | rank score ${pct(rule.rankScore)}</div>
+          <button class="chip-button" type="button">Details</button>
         </div>
       `;
       document.getElementById("fusionActiveModels").innerHTML = monthSet.active.length ? monthSet.active.slice(0, FUSION_ACTIVE_LIMIT).map(modelCard).join("") : `<div class="warn">Not enough prior training data to activate Fusion models for ${prefix}.</div>`;
@@ -1460,6 +1781,7 @@
         const monthStats = summarizeFusionHits(rule.hits.filter((hit) => hit.date.startsWith(prefix)));
         return {
           ...rule,
+          displayForecast: forecastGroup(rule.forecast),
           monthlyStatus: activeIds.has(rule.id) ? "active" : "standby",
           selectedMonthCases: monthStats.total,
           selectedMonthAccuracy: monthStats.accuracy,
@@ -1468,7 +1790,7 @@
       document.getElementById("fusionRules").innerHTML = table(tableRows, [
         ["monthlyStatus", "Set"],
         ["name", "Rule"],
-        ["forecast", "Forecast"],
+        ["displayForecast", "Forecast"],
         ["cases", "Cases"],
         ["accuracy", "Accuracy", pct],
         ["recent90Accuracy", "Recent 90d", pct],
@@ -1480,6 +1802,7 @@
         ["wrong", "Wrong"],
         ["winningExamples", "Similar winning dates"],
       ]);
+      if (bestFusion) showFusionRuleDetail(bestFusion.id);
 
       const recentEvents = allWalkForwardCalls.filter((call) => call.score != null).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 18);
       document.getElementById("fusionEvents").innerHTML = recentEvents.length ? recentEvents.map((event) => {
@@ -1489,7 +1812,7 @@
           <div class="fusion-event">
             <div class="date">${event.date}</div>
             <div>
-              <p><strong>${event.rule.name}</strong> <span class="tag ${event.forecast}">${event.forecast}</span> <span class="tag ${event.status}">${event.status}${event.provisional ? " / provisional" : ""}</span></p>
+              <p><strong>${event.rule.name}</strong> <span class="tag ${forecastGroup(event.forecast)}">${forecastGroup(event.forecast)}</span> <span class="tag ${event.status}">${event.status}${event.provisional ? " / provisional" : ""}</span></p>
               <p>Astro: ${astroText(astro)}</p>
               <p>Index: ${scenario ? `${scenario.forecast} ${pct(scenario.confidence)} from ${scenario.matches} analogs` : "No scenario call"} | Actual: ${event.actual}</p>
             </div>
@@ -1561,9 +1884,13 @@
       document.getElementById("futureThreshold").addEventListener("input", renderFuture);
       document.getElementById("fusionYear").addEventListener("change", () => { updateFusionMonths(); renderFusion(); });
       document.getElementById("fusionMonth").addEventListener("change", renderFusion);
+      document.getElementById("fusionRange").addEventListener("change", renderFusion);
       document.getElementById("fusionDirection").addEventListener("change", renderFusion);
       document.getElementById("fusionThreshold").addEventListener("input", renderFusion);
       document.getElementById("fusionSet").addEventListener("change", renderFusion);
+      ["fusionLayerPrice", "fusionLayerIndex", "fusionLayerAstro", "fusionLayerFusion"].forEach((id) => {
+        document.getElementById(id).addEventListener("change", renderFusion);
+      });
     }
 
     async function load() {
