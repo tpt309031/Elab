@@ -8,9 +8,9 @@
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <style>
     :root {
-      --bg: #050505;
-      --panel: rgba(16, 16, 16, 0.92);
-      --panel2: rgba(26, 26, 26, 0.78);
+      --bg: #0f0f0f;
+      --panel: rgba(17, 17, 17, 0.94);
+      --panel2: rgba(22, 22, 22, 0.84);
       --line: rgba(255, 255, 255, 0.12);
       --muted: #9ca3af;
       --text: #f8fafc;
@@ -24,8 +24,8 @@
     body {
       margin: 0;
       background:
-        radial-gradient(circle at 80% 0%, rgba(247, 147, 26, .20), transparent 30%),
-        radial-gradient(circle at 5% 35%, rgba(96, 165, 250, .08), transparent 24%),
+        radial-gradient(circle at 82% 0%, rgba(247, 147, 26, .14), transparent 32%),
+        radial-gradient(circle at 4% 34%, rgba(96, 165, 250, .06), transparent 28%),
         var(--bg);
       color: var(--text);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -56,9 +56,9 @@
     .grid.two { grid-template-columns: 1.15fr .85fr; }
     .card {
       border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(21,21,21,.96), rgba(10,10,10,.92));
-      border-radius: 10px;
-      box-shadow: 0 18px 54px rgba(0,0,0,.22);
+      background: linear-gradient(180deg, rgba(18,18,18,.97), rgba(12,12,12,.94));
+      border-radius: 14px;
+      box-shadow: 0 24px 70px rgba(0,0,0,.28);
       padding: 16px;
     }
     .metric {
@@ -344,54 +344,156 @@
     .layer-toggle input { width: auto; padding: 0; accent-color: var(--btc); }
     .viz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
     .fusion-calendar {
-      margin: 16px 0 4px;
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,.025);
-      border-radius: 8px;
-      overflow: hidden;
+      margin: 18px 0 4px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: #111111;
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 28px 90px rgba(0,0,0,.34);
     }
     .calendar-title {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--line);
-      background: linear-gradient(90deg, rgba(247,147,26,.12), rgba(255,255,255,.025));
+      gap: 18px;
+      margin-bottom: 16px;
     }
-    .calendar-title strong { color: #ffedd5; }
-    .calendar-title span { color: var(--muted); font-size: 12px; }
+    .calendar-title-main {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+    .calendar-nav {
+      width: 42px;
+      height: 42px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.04);
+      color: #f8fafc;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 24px;
+      line-height: 1;
+      transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease;
+    }
+    .calendar-nav:hover {
+      transform: translateY(-1px);
+      border-color: rgba(247,147,26,.60);
+      background: rgba(247,147,26,.10);
+      box-shadow: 0 14px 34px rgba(247,147,26,.12);
+    }
+    .calendar-heading { min-width: 0; }
+    .calendar-eyebrow {
+      color: var(--btc);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    .calendar-heading strong {
+      display: block;
+      margin-top: 3px;
+      color: #f8fafc;
+      font-size: clamp(26px, 3vw, 42px);
+      line-height: 1;
+      letter-spacing: -.04em;
+    }
+    .calendar-heading span {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .calendar-legend {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      max-width: 520px;
+    }
+    .calendar-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: #d1d5db;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.035);
+      border-radius: 999px;
+      padding: 6px 9px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .legend-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 5px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+    }
+    .legend-swatch.up { background: #10b981; }
+    .legend-swatch.sideway { background: #f59e0b; }
+    .legend-swatch.down { background: #dc2626; }
+    .legend-swatch.split { background: linear-gradient(180deg, rgba(16,185,129,.72) 0 50%, rgba(239,68,68,.82) 50% 100%); }
+    .legend-swatch.no-call { background: #4b5563; }
     .calendar-grid {
       display: grid;
       grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 10px;
     }
     .calendar-head {
-      padding: 9px 8px;
+      padding: 5px 4px 7px;
       text-align: center;
-      color: #fed7aa;
-      background: rgba(247,147,26,.08);
-      border-bottom: 1px solid var(--line);
+      color: #9ca3af;
+      background: transparent;
       font-size: 11px;
       font-weight: 900;
-      letter-spacing: .10em;
+      letter-spacing: .16em;
       text-transform: uppercase;
     }
     .calendar-cell {
-      min-height: 124px;
-      padding: 9px;
-      border-left: 1px solid var(--line);
-      border-bottom: 1px solid var(--line);
-      background: rgba(255,255,255,.03);
-      color: #e5e7eb;
+      min-height: 136px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 13px;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 15px;
+      background: #1f2937;
+      color: #f8fafc;
+      box-shadow: 0 16px 38px rgba(0,0,0,.30);
+      overflow: hidden;
+      cursor: default;
+      position: relative;
+      transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease, filter .16s ease;
     }
-    .calendar-cell:nth-child(7n + 1) { border-left: 0; }
+    .calendar-cell[onclick] { cursor: pointer; }
+    .calendar-cell:hover {
+      transform: scale(1.025);
+      border-color: rgba(255,255,255,.26);
+      box-shadow: 0 24px 62px rgba(0,0,0,.48);
+      z-index: 2;
+    }
     .calendar-cell.empty {
-      background: rgba(255,255,255,.012);
+      min-height: 136px;
+      background: transparent;
+      border: 0;
+      box-shadow: none;
       color: transparent;
+      pointer-events: none;
     }
     .calendar-cell.no-call {
-      color: #9ca3af;
-      background: rgba(255,255,255,.025);
+      color: #e5e7eb;
+      background: linear-gradient(180deg, #4b5563, #374151);
+      border-color: rgba(255,255,255,.08);
+    }
+    .calendar-cell.today {
+      border-color: #f7931a;
+      box-shadow: 0 0 0 1px rgba(247,147,26,.75), 0 24px 62px rgba(247,147,26,.16);
     }
     .calendar-day {
       display: flex;
@@ -400,68 +502,84 @@
       gap: 8px;
       font-weight: 900;
     }
-    .calendar-day span:last-child {
-      color: inherit;
-      opacity: .72;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: .08em;
+    .calendar-date-number {
+      color: rgba(255,255,255,.86);
+      font-size: 14px;
+      line-height: 1;
     }
-    .calendar-pred {
-      margin-top: 9px;
+    .calendar-day-tag {
+      color: rgba(255,255,255,.62);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+    }
+    .calendar-move {
+      margin: auto 0 0;
+      color: #fff;
+      font-size: clamp(24px, 2.5vw, 34px);
       font-weight: 950;
+      letter-spacing: -.04em;
+      line-height: .96;
+      text-shadow: 0 2px 18px rgba(0,0,0,.35);
+    }
+    .calendar-move.positive { color: #f0fdf4; }
+    .calendar-move.negative { color: #fff1f2; }
+    .calendar-move.flat { color: #f9fafb; }
+    .calendar-status {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: rgba(255,255,255,.86);
+      font-size: 11px;
+      font-weight: 900;
       text-transform: uppercase;
       letter-spacing: .08em;
     }
-    .calendar-meta {
-      margin-top: 5px;
-      font-size: 12px;
-      line-height: 1.35;
-    }
-    .calendar-rule {
-      margin-top: 6px;
-      font-size: 11px;
-      line-height: 1.35;
-      opacity: .84;
+    .calendar-status span {
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .calendar-cell.up {
-      background: #dcfce7;
-      color: #052e16;
+      background: linear-gradient(180deg, rgba(16,185,129,.42), rgba(6,95,70,.50));
+      border-color: rgba(16,185,129,.32);
     }
     .calendar-cell.up.correct {
-      background: #22c55e;
-      color: #031b0c;
+      background: linear-gradient(180deg, #34d399, #10b981 56%, #047857);
+      border-color: rgba(52,211,153,.62);
     }
     .calendar-cell.up.wrong {
-      background: linear-gradient(180deg, #dcfce7 0 50%, #ef4444 50% 100%);
-      color: #111827;
+      background: linear-gradient(180deg, rgba(16,185,129,.52) 0 50%, rgba(239,68,68,.76) 50% 100%);
+      border-color: rgba(255,255,255,.14);
     }
     .calendar-cell.sideway {
-      background: #fef9c3;
-      color: #3f3007;
+      background: linear-gradient(180deg, rgba(251,191,36,.46), rgba(146,64,14,.46));
+      border-color: rgba(251,191,36,.34);
     }
     .calendar-cell.sideway.correct {
-      background: #fb923c;
-      color: #231000;
+      background: linear-gradient(180deg, #fbbf24, #f59e0b 58%, #b45309);
+      border-color: rgba(245,158,11,.66);
     }
     .calendar-cell.sideway.wrong {
-      background: linear-gradient(180deg, #fef9c3 0 50%, #ef4444 50% 100%);
-      color: #111827;
+      background: linear-gradient(180deg, rgba(251,191,36,.58) 0 50%, rgba(239,68,68,.76) 50% 100%);
+      border-color: rgba(255,255,255,.14);
     }
     .calendar-cell.down {
-      background: #fee2e2;
-      color: #450a0a;
+      background: linear-gradient(180deg, rgba(239,68,68,.48), rgba(127,29,29,.52));
+      border-color: rgba(239,68,68,.34);
     }
     .calendar-cell.down.correct {
-      background: #ef4444;
-      color: #fff7f7;
+      background: linear-gradient(180deg, #ef4444, #dc2626 56%, #7f1d1d);
+      border-color: rgba(248,113,113,.62);
     }
     .calendar-cell.down.wrong {
-      background: linear-gradient(180deg, #fee2e2 0 50%, #991b1b 50% 100%);
-      color: #fff7f7;
+      background: linear-gradient(180deg, rgba(239,68,68,.56) 0 50%, #991b1b 50% 100%);
+      border-color: rgba(248,113,113,.48);
     }
     .calendar-cell.delayed {
-      box-shadow: inset 0 0 0 2px #eab308;
+      box-shadow: inset 0 0 0 2px #fbbf24, 0 16px 38px rgba(0,0,0,.30);
     }
     .calendar-cell.pending {
       opacity: .88;
@@ -1514,6 +1632,47 @@
       };
     }
 
+    function signedPct(value) {
+      if (value == null || Number.isNaN(Number(value))) return "-";
+      const number = Number(value);
+      return `${number > 0 ? "+" : ""}${(number * 100).toFixed(1)}%`;
+    }
+
+    function cleanStatusLabel(status) {
+      const labels = {
+        correct: "Correct",
+        wrong: "Wrong",
+        partial: "Partial",
+        delayed: "Delayed",
+        pending: "Pending",
+        "no-call": "-",
+      };
+      return labels[status] || status || "-";
+    }
+
+    function cleanPredictionLabel(prediction) {
+      if (prediction === "no-call") return "NO CALL";
+      return String(prediction || "-").toUpperCase();
+    }
+
+    function shiftFusionMonth(delta) {
+      const yearSelect = document.getElementById("fusionYear");
+      const monthSelect = document.getElementById("fusionMonth");
+      if (!yearSelect || !monthSelect) return;
+      const current = parse(`${selectedFusionPrefix()}-01`);
+      current.setUTCMonth(current.getUTCMonth() + delta);
+      const nextYear = String(current.getUTCFullYear());
+      const nextMonth = String(current.getUTCMonth() + 1);
+      const yearOptions = Array.from(yearSelect.options || []).map((option) => String(option.value));
+      if (yearOptions.length && !yearOptions.includes(nextYear)) return;
+      yearSelect.value = nextYear;
+      updateFusionMonths();
+      const monthOptions = Array.from(monthSelect.options || []).map((option) => String(option.value));
+      if (monthOptions.length && !monthOptions.includes(nextMonth)) return;
+      monthSelect.value = nextMonth;
+      renderFusion();
+    }
+
     function renderFusionCalendar(prefix, calls) {
       const target = document.getElementById("fusionCalendar");
       if (!target) return;
@@ -1528,6 +1687,8 @@
       const leadingBlanks = start.getUTCDay();
       const callByDate = new Map((calls || []).map((call) => [call.date, call]));
       const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const monthLabel = start.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+      const today = dateKey(new Date());
       const cells = [];
       for (let index = 0; index < leadingBlanks; index += 1) {
         cells.push(`<div class="calendar-cell empty" aria-hidden="true"></div>`);
@@ -1541,18 +1702,18 @@
         const statusClass = call ? `${prediction} ${status}` : "no-call";
         const actual = call ? (call.actual || "pending") : "-";
         const confidence = call ? pct(call.confidence) : "-";
-        const move = daily ? pct(daily.move) : "-";
+        const move = daily ? signedPct(daily.move) : "-";
+        const moveClass = !daily ? "flat" : daily.move > 0.001 ? "positive" : daily.move < -0.001 ? "negative" : "flat";
         const ruleName = call?.rule?.name || "No Fusion call";
-        const scoreText = call?.score == null ? "" : ` | score ${pct(call.score)}`;
         const provisional = call?.provisional ? " / provisional" : "";
+        const dayName = weekdays[parse(date).getUTCDay()];
+        const todayClass = date === today ? " today" : "";
+        const aria = `${date}. ${cleanPredictionLabel(prediction)}. ${cleanStatusLabel(status)}${provisional}. Move ${move}. Actual ${actual}. ${ruleName}. Confidence ${confidence}.`;
         cells.push(`
-          <div class="calendar-cell ${statusClass}" ${call ? `onclick="showFusionRuleDetail('${call.rule.id}')"` : ""}>
-            <div class="calendar-day"><span>${day}</span><span>${date}</span></div>
-            <div class="calendar-pred">${prediction === "no-call" ? "No call" : prediction}</div>
-            <div class="calendar-meta">Move: <b>${move}</b></div>
-            <div class="calendar-meta">Actual: <b>${actual}</b></div>
-            <div class="calendar-meta">Eval: <b>${status}${provisional}</b>${scoreText}</div>
-            <div class="calendar-rule">${ruleName}${call ? ` | confidence ${confidence}` : ""}</div>
+          <div class="calendar-cell ${statusClass}${todayClass}" ${call ? `onclick="showFusionRuleDetail('${call.rule.id}')"` : ""} aria-label="${aria}">
+            <div class="calendar-day"><span class="calendar-date-number">${day}</span><span class="calendar-day-tag">${dayName}</span></div>
+            <div class="calendar-move ${moveClass}">${move}</div>
+            <div class="calendar-status"><span>${cleanPredictionLabel(prediction)}</span><span>${cleanStatusLabel(status)}</span></div>
           </div>
         `);
       }
@@ -1560,8 +1721,22 @@
       const pending = calls.filter((call) => call.status === "pending").length;
       target.innerHTML = `
         <div class="calendar-title">
-          <strong>Fusion monthly forecast calendar - ${prefix}</strong>
-          <span>${calls.length} calls | ${evaluated} evaluated | ${pending} pending | day move = daily open-to-close return</span>
+          <div class="calendar-title-main">
+            <button class="calendar-nav" type="button" onclick="shiftFusionMonth(-1)" aria-label="Previous Fusion month">&#8249;</button>
+            <div class="calendar-heading">
+              <div class="calendar-eyebrow">Fusion Forecast Calendar</div>
+              <strong>${monthLabel}</strong>
+              <span>${calls.length} calls | ${evaluated} evaluated | ${pending} pending | Move = daily open-to-close return</span>
+            </div>
+            <button class="calendar-nav" type="button" onclick="shiftFusionMonth(1)" aria-label="Next Fusion month">&#8250;</button>
+          </div>
+          <div class="calendar-legend" aria-label="Calendar color legend">
+            <span><i class="legend-swatch up"></i>UP</span>
+            <span><i class="legend-swatch sideway"></i>SIDEWAY</span>
+            <span><i class="legend-swatch down"></i>DOWN</span>
+            <span><i class="legend-swatch split"></i>Wrong split</span>
+            <span><i class="legend-swatch no-call"></i>No call</span>
+          </div>
         </div>
         <div class="calendar-grid">
           ${weekdays.map((day) => `<div class="calendar-head">${day}</div>`).join("")}
