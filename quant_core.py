@@ -687,7 +687,7 @@ def scenario_pattern_forecasts(
                 status = "wrong"
             if status == "wrong" and is_final_for_forecast and forecast in {"up", "down", "sideway"}:
                 delayed = []
-                for lag in [1, 2]:
+                for lag in [1, 2, 3]:
                     delayed_actual, _, _, _, delayed_is_final, _ = realized(current["date"] + pd.Timedelta(days=lag))
                     if forecast != "sideway" or delayed_is_final:
                         delayed.append(delayed_actual)
@@ -767,7 +767,7 @@ def update_scenario_ledger(
             status = "wrong"
         if status == "wrong" and is_final_for_forecast:
             delayed = []
-            for lag in [1, 2]:
+            for lag in [1, 2, 3]:
                 delayed_actual, _, _, _, delayed_is_final, _ = realized(pd.Timestamp(row["date"]) + pd.Timedelta(days=lag))
                 if forecast != "sideway" or delayed_is_final:
                     delayed.append(delayed_actual)

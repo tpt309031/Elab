@@ -926,7 +926,7 @@
         status = partialScoreForForecast(scenario.forecast, return3d, dayReturn) > 0 ? "partial" : "wrong";
       }
       if (status === "wrong" && isFinal) {
-        for (const lag of [1, 2]) {
+        for (const lag of [1, 2, 3]) {
           const lagIndex = index + lag;
           if (lagIndex + 3 >= market.length) continue;
           const lagFuture = market.slice(lagIndex + 1, lagIndex + 4);
