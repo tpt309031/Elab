@@ -39,17 +39,34 @@ FEATURE_COLUMNS = [
 ]
 
 
-def classify_btc_outcome(return_3d: float, range_2d: float) -> str:
-    if return_3d > 0.036:
+UP_1D_THRESHOLD = 0.03
+DOWN_1D_THRESHOLD = -0.03
+SIDEWAY_3D_THRESHOLD = 0.015
+PARTIAL_SIDEWAY_3D_THRESHOLD = 0.03
+
+
+def classify_btc_outcome(return_3d: float | None, range_2d: float | None = None, day_return: float | None = None) -> str:
+    one_day = return_3d if day_return is None else day_return
+    if one_day is not None and one_day >= UP_1D_THRESHOLD:
         return "up"
-    if return_3d < -0.036:
+    if one_day is not None and one_day <= DOWN_1D_THRESHOLD:
         return "down"
-    if range_2d <= 0.02:
+    if return_3d is not None and abs(return_3d) <= SIDEWAY_3D_THRESHOLD:
         return "sideway"
     return "mixed"
 
 
-def realized_btc_outcome(market: pd.DataFrame, date) -> tuple[str | None, float | None, float | None, int, bool]:
+def partial_score_for_forecast(forecast: str, return_3d: float | None, day_return: float | None) -> float:
+    if forecast == "up":
+        return 0.5 if day_return is not None and day_return > 0 else 0.0
+    if forecast == "down":
+        return 0.5 if day_return is not None and day_return < 0 else 0.0
+    if forecast == "sideway":
+        return 0.5 if return_3d is not None and abs(return_3d) <= PARTIAL_SIDEWAY_3D_THRESHOLD else 0.0
+    return 0.0
+
+
+def realized_btc_outcome(market: pd.DataFrame, date) -> tuple[str | None, float | None, float | None, int, bool, float | None]:
     """Classify closed BTC movement after a signal date.
 
     A full evaluation uses three closed daily candles after the signal date. If
@@ -58,9 +75,10 @@ def realized_btc_outcome(market: pd.DataFrame, date) -> tuple[str | None, float 
     """
     date = pd.Timestamp(date).normalize()
     if date not in market.index:
-        return None, None, None, 0, False
+        return None, None, None, 0, False, None
     future = market.loc[market.index > date].head(3)
     base_row = market.loc[date]
+    day_return = float(base_row["close"] / base_row["open"] - 1)
     if len(future) >= 2:
         horizon = min(3, len(future))
         base = float(base_row["close"])
@@ -74,9 +92,9 @@ def realized_btc_outcome(market: pd.DataFrame, date) -> tuple[str | None, float 
         realized_range = float(future.iloc[0]["high"] / future.iloc[0]["low"] - 1)
     else:
         horizon = 0
-        realized_return = float(base_row["close"] / base_row["open"] - 1)
-        realized_range = float(base_row["high"] / base_row["low"] - 1)
-    return classify_btc_outcome(realized_return, realized_range), realized_return, realized_range, horizon, horizon >= 3
+        realized_return = None
+        realized_range = None
+    return classify_btc_outcome(realized_return, realized_range, day_return), realized_return, realized_range, horizon, horizon >= 3, day_return
 
 
 def _month_number(value) -> int | None:
@@ -592,9 +610,9 @@ def scenario_pattern_forecasts(
     """Build walk-forward historical and future scenarios with realized grading.
 
     Outcome convention:
-    - up: close return after 3 days > 3.6%
-    - down: close return after 3 days < -3.6%
-    - sideway: next 2-day high-low range <= 2%
+    - up: same-day open-to-close return >= +3%
+    - down: same-day open-to-close return <= -3%
+    - sideway: 3-day close return within +/-1.5%
     - mixed: none of the above
     """
     idx = indices[["date", "index_BTC", "index_me"]].dropna().copy().sort_values("date")
@@ -617,11 +635,13 @@ def scenario_pattern_forecasts(
         history = idx[idx["date"] <= date].tail(3)
         if len(history) < 3:
             continue
-        outcome, return_3d, range_2d, horizon, is_final = realized(date)
+        outcome, return_3d, range_2d, horizon, is_final, day_return = realized(date)
+        actual_final_for_outcome = outcome in {"up", "down"} or (outcome == "sideway" and is_final)
         candidates.append({
             "date": date, "vector": signature(history), "actual": outcome,
             "actual_return_3d": return_3d, "actual_range_2d": range_2d,
-            "actual_horizon": horizon, "actual_is_final": is_final,
+            "actual_day_return": day_return, "actual_horizon": horizon, "actual_is_final": is_final,
+            "actual_final_for_outcome": actual_final_for_outcome,
         })
     if not candidates:
         return pd.DataFrame()
@@ -630,7 +650,8 @@ def scenario_pattern_forecasts(
     candidate_date_values = candidate_dates.to_numpy(dtype="datetime64[ns]")
     vectors = np.vstack([item["vector"] for item in candidates]).astype(float)
     actuals = np.array([item["actual"] for item in candidates], dtype=object)
-    valid_actual = np.isin(actuals, ["up", "down", "sideway"])
+    actual_final_flags = np.array([item["actual_final_for_outcome"] for item in candidates], dtype=bool)
+    valid_actual = np.isin(actuals, ["up", "down", "sideway"]) & actual_final_flags
     capped_dates = np.minimum(
         candidate_date_values,
         np.datetime64(price_end + pd.Timedelta(days=1), "ns"),
@@ -653,18 +674,23 @@ def scenario_pattern_forecasts(
         actual = current["actual"]
         status = "pending"
         if actual is not None:
-            if actual == forecast:
-                status = "correct" if current["actual_is_final"] else "partial"
+            is_final_for_forecast = current["actual_is_final"] if forecast == "sideway" else True
+            if not is_final_for_forecast:
+                status = "pending"
+            elif actual == forecast:
+                status = "correct"
             elif actual == "mixed":
-                direction = np.sign(current["actual_return_3d"] or 0)
-                status = "partial" if (
-                    (forecast == "up" and direction > 0) or (forecast == "down" and direction < 0)
-                    or (forecast == "sideway" and abs(current["actual_return_3d"] or 0) <= 0.036)
-                ) else "wrong"
+                status = "partial" if partial_score_for_forecast(
+                    forecast, current["actual_return_3d"], current["actual_day_return"],
+                ) > 0 else "wrong"
             else:
                 status = "wrong"
-            if status == "wrong" and current["actual_is_final"] and forecast in {"up", "down", "sideway"}:
-                delayed = [realized(current["date"] + pd.Timedelta(days=lag))[0] for lag in [1, 2]]
+            if status == "wrong" and is_final_for_forecast and forecast in {"up", "down", "sideway"}:
+                delayed = []
+                for lag in [1, 2]:
+                    delayed_actual, _, _, _, delayed_is_final, _ = realized(current["date"] + pd.Timedelta(days=lag))
+                    if forecast != "sideway" or delayed_is_final:
+                        delayed.append(delayed_actual)
                 if forecast in delayed:
                     status = "delayed"
         rows.append({
@@ -726,21 +752,26 @@ def update_scenario_ledger(
         return realized_btc_outcome(market, date)
 
     for row_index, row in ledger[ledger["source"] == source_name].iterrows():
-        actual, return_3d, range_2d, horizon, is_final = realized(row["date"])
+        actual, return_3d, range_2d, horizon, is_final, day_return = realized(row["date"])
         if actual is None:
             continue
-        status = ("correct" if is_final else "partial") if actual == row["forecast"] else "wrong"
-        if status == "wrong" and actual == "mixed":
-            direction = np.sign(return_3d or 0)
-            if (
-                (row["forecast"] == "up" and direction > 0)
-                or (row["forecast"] == "down" and direction < 0)
-                or (row["forecast"] == "sideway" and abs(return_3d or 0) <= 0.036)
-            ):
-                status = "partial"
-        if status == "wrong" and is_final:
-            delayed = [realized(pd.Timestamp(row["date"]) + pd.Timedelta(days=lag))[0] for lag in [1, 2]]
-            if row["forecast"] in delayed:
+        forecast = str(row["forecast"])
+        is_final_for_forecast = is_final if forecast == "sideway" else True
+        if not is_final_for_forecast:
+            status = "pending"
+        elif actual == forecast:
+            status = "correct"
+        elif actual == "mixed" and partial_score_for_forecast(forecast, return_3d, day_return) > 0:
+            status = "partial"
+        else:
+            status = "wrong"
+        if status == "wrong" and is_final_for_forecast:
+            delayed = []
+            for lag in [1, 2]:
+                delayed_actual, _, _, _, delayed_is_final, _ = realized(pd.Timestamp(row["date"]) + pd.Timedelta(days=lag))
+                if forecast != "sideway" or delayed_is_final:
+                    delayed.append(delayed_actual)
+            if forecast in delayed:
                 status = "delayed"
         ledger.loc[row_index, ["actual", "status", "actual_return_3d", "actual_range_2d", "evaluated_at"]] = [
             actual, status, return_3d, range_2d, now_text,

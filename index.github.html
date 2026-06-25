@@ -659,7 +659,7 @@
         <div class="card">
           <h3 style="margin-top:0">BTC 5m realtime</h3>
           <iframe src="https://s.tradingview.com/widgetembed/?symbol=BINANCE%3ABTCUSDT&interval=5&theme=dark&style=1&timezone=Etc%2FUTC&hide_side_toolbar=0&allow_symbol_change=1&save_image=0"></iframe>
-          <p class="muted">TradingView handles intraday realtime. Forecast grading uses closed UTC daily candles, with provisional grading when only 1-2 closed candles are available.</p>
+          <p class="muted">TradingView handles intraday realtime. UP/DOWN grading uses the closed UTC daily candle; SIDEWAY grading waits for the full 3D window.</p>
         </div>
         <div class="card">
           <div class="toolbar">
@@ -735,8 +735,8 @@
             <p class="muted">Fusion forecasts only three main states: <b>up</b>, <b>down</b>, and <b>sideway</b>. Volatility, shock, phase, gap, and astro events are features used to score and rank models.</p>
           </div>
           <div class="outcome-strip">
-            <div><strong class="tag up">UP</strong><span>3D return &gt; 3.6%</span></div>
-            <div><strong class="tag down">DOWN</strong><span>3D return &lt; -3.6%</span></div>
+            <div><strong class="tag up">UP</strong><span>1D move &gt;= +3%</span></div>
+            <div><strong class="tag down">DOWN</strong><span>1D move &lt;= -3%</span></div>
             <div><strong class="tag sideway">SIDEWAY</strong><span>|3D return| &lt;= 1.5%</span></div>
           </div>
         </div>
@@ -769,7 +769,7 @@
       <div class="viz-grid">
         <div class="card">
           <h3 style="margin-top:0">Outcome correlation heatmap</h3>
-          <p class="muted">Fusion feature correlation against 3D outcomes in the walk-forward backtest from 2024.</p>
+          <p class="muted">Fusion feature correlation against the current outcome rules in the walk-forward backtest from 2024.</p>
           <div id="fusionHeatmap" class="plot mini"></div>
         </div>
         <div class="card">
@@ -844,6 +844,10 @@
     const dateKey = (value) => new Date(value).toISOString().slice(0, 10);
     const monthKey = (value) => dateKey(value).slice(0, 7);
     const parse = (value) => new Date(`${value}T00:00:00Z`);
+    const UP_1D_THRESHOLD = 0.03;
+    const DOWN_1D_THRESHOLD = -0.03;
+    const SIDEWAY_3D_THRESHOLD = 0.015;
+    const PARTIAL_SIDEWAY_3D_THRESHOLD = 0.03;
 
     function expandCompactDashboard(payload) {
       if (!payload || !payload.compact) return payload;
@@ -875,11 +879,19 @@
       };
     }
 
-    function classifyOutcome(return3d, range2d) {
-      if (return3d > 0.036) return "up";
-      if (return3d < -0.036) return "down";
-      if (Math.abs(return3d) <= 0.015) return "sideway";
+    function classifyOutcome(return3d, dayReturn) {
+      if (Number(dayReturn) >= UP_1D_THRESHOLD) return "up";
+      if (Number(dayReturn) <= DOWN_1D_THRESHOLD) return "down";
+      if (return3d != null && Math.abs(Number(return3d)) <= SIDEWAY_3D_THRESHOLD) return "sideway";
       return "mixed";
+    }
+
+    function partialScoreForForecast(forecast, return3d, dayReturn) {
+      const normalized = forecastGroup(forecast);
+      if (normalized === "up") return Number(dayReturn) > 0 ? 0.5 : 0;
+      if (normalized === "down") return Number(dayReturn) < 0 ? 0.5 : 0;
+      if (normalized === "sideway") return return3d != null && Math.abs(Number(return3d)) <= PARTIAL_SIDEWAY_3D_THRESHOLD ? 0.5 : 0;
+      return 0;
     }
 
     function evaluateScenario(scenario) {
@@ -888,6 +900,7 @@
       if (index < 0) return { status: "pending", actual: null };
       const baseRow = market[index];
       const base = Number(baseRow.close);
+      const dayReturn = Number(baseRow.close) / Number(baseRow.open) - 1;
       const future = market.slice(index + 1, index + 4);
       const horizon = Math.min(3, future.length);
       let return3d;
@@ -899,20 +912,18 @@
         return3d = Number(future[0].close) / base - 1;
         range2d = Number(future[0].high) / Number(future[0].low) - 1;
       } else {
-        return3d = Number(baseRow.close) / Number(baseRow.open) - 1;
-        range2d = Number(baseRow.high) / Number(baseRow.low) - 1;
+        return3d = null;
+        range2d = null;
       }
-      const actual = classifyOutcome(return3d, range2d);
-      const isFinal = horizon >= 3;
+      const actual = classifyOutcome(return3d, dayReturn);
+      const isFinal = forecastGroup(scenario.forecast) === "sideway" ? horizon >= 3 : true;
       let status = "wrong";
-      if (actual === scenario.forecast) status = isFinal ? "correct" : "partial";
-      else if (actual === "mixed") {
-        const direction = Math.sign(return3d);
-        status = (
-          (scenario.forecast === "up" && direction > 0) ||
-          (scenario.forecast === "down" && direction < 0) ||
-          (scenario.forecast === "sideway" && Math.abs(return3d) <= 0.036)
-        ) ? "partial" : "wrong";
+      if (!isFinal) {
+        status = "pending";
+      } else if (actual === scenario.forecast) {
+        status = "correct";
+      } else if (actual === "mixed") {
+        status = partialScoreForForecast(scenario.forecast, return3d, dayReturn) > 0 ? "partial" : "wrong";
       }
       if (status === "wrong" && isFinal) {
         for (const lag of [1, 2]) {
@@ -920,11 +931,11 @@
           if (lagIndex + 3 >= market.length) continue;
           const lagFuture = market.slice(lagIndex + 1, lagIndex + 4);
           const lagReturn = Number(lagFuture[2].close) / Number(market[lagIndex].close) - 1;
-          const lagRange = Math.max(Number(lagFuture[0].high), Number(lagFuture[1].high)) / Math.min(Number(lagFuture[0].low), Number(lagFuture[1].low)) - 1;
-          if (classifyOutcome(lagReturn, lagRange) === scenario.forecast) status = "delayed";
+          const lagDayReturn = Number(market[lagIndex].close) / Number(market[lagIndex].open) - 1;
+          if (classifyOutcome(lagReturn, lagDayReturn) === scenario.forecast) status = "delayed";
         }
       }
-      return { status, actual, return3d, range2d, horizon, isFinal };
+      return { status, actual, return3d, range2d, dayReturn, horizon, isFinal };
     }
 
     function statusScore(status) {
@@ -971,7 +982,7 @@
         <div class="score-card">
           <div class="label">${label}</div>
           <div class="value">${pct(summary.accuracy)}</div>
-          <div class="mini">${summary.total} evaluated | OK ${summary.correct} | +/- ${summary.delayed} | partial ${summary.partial} | wrong ${summary.wrong}</div>
+          <div class="mini">${summary.total} evaluated | OK ${summary.correct} | +/- ${summary.delayed} | 1 phần ${summary.partial} | wrong ${summary.wrong}</div>
           <div class="bar"><span style="width:${Math.round(summary.accuracy * 100)}%"></span></div>
         </div>
       `;
@@ -1076,25 +1087,21 @@
       const baseRow = market[index];
       const base = Number(baseRow.close);
       const future = market.slice(index + 1, index + 4);
-      if (!future.length) {
-        state.outcomeCache.set(date, null);
-        return null;
-      }
       const horizon = Math.min(3, future.length);
-      const return3d = Number(future[horizon - 1].close) / base - 1;
+      const return3d = horizon > 0 ? Number(future[horizon - 1].close) / base - 1 : null;
       const rangeSlice = future.slice(0, Math.min(2, future.length));
-      const range2d = Math.max(...rangeSlice.map((row) => Number(row.high))) / Math.min(...rangeSlice.map((row) => Number(row.low))) - 1;
+      const range2d = rangeSlice.length ? Math.max(...rangeSlice.map((row) => Number(row.high))) / Math.min(...rangeSlice.map((row) => Number(row.low))) - 1 : null;
       const dayReturn = Number(baseRow.close) / Number(baseRow.open) - 1;
       const wickRange = Number(baseRow.high) / Number(baseRow.low) - 1;
       const outcome = {
-        actual: classifyOutcome(return3d, range2d),
+        actual: classifyOutcome(return3d, dayReturn),
         return3d,
         range2d,
         dayReturn,
         wickRange,
         horizon,
         isFinal: horizon >= 3,
-        volatilityHit: Math.abs(return3d) > 0.036 || range2d > 0.04 || Math.abs(dayReturn) > 0.04 || wickRange > 0.055,
+        volatilityHit: (return3d != null && Math.abs(return3d) > 0.036) || (range2d != null && range2d > 0.04) || Math.abs(dayReturn) >= UP_1D_THRESHOLD || wickRange > 0.055,
       };
       state.outcomeCache.set(date, outcome);
       return outcome;
@@ -1105,17 +1112,17 @@
       const normalized = forecastGroup(forecast);
       if (normalized === "up") {
         if (outcome.actual === "up") return 1;
-        if (outcome.actual === "mixed" && outcome.return3d > 0) return 0.5;
+        if (outcome.actual === "mixed" && partialScoreForForecast(normalized, outcome.return3d, outcome.dayReturn) > 0) return 0.5;
         return 0;
       }
       if (normalized === "down") {
         if (outcome.actual === "down") return 1;
-        if (outcome.actual === "mixed" && outcome.return3d < 0) return 0.5;
+        if (outcome.actual === "mixed" && partialScoreForForecast(normalized, outcome.return3d, outcome.dayReturn) > 0) return 0.5;
         return 0;
       }
       if (normalized === "sideway") {
         if (outcome.actual === "sideway") return 1;
-        if (Math.abs(outcome.return3d) <= 0.022 && !outcome.volatilityHit) return 0.5;
+        if (outcome.actual === "mixed" && partialScoreForForecast(normalized, outcome.return3d, outcome.dayReturn) > 0) return 0.5;
         return 0;
       }
       return null;
@@ -1131,14 +1138,21 @@
 
     function scoreForecastAtDate(forecast, date, options = {}) {
       const primary = actualOutcomeForDate(date);
-      if (!primary || (!primary.isFinal && !options.provisional)) return null;
+      if (!primary) return null;
+      const normalizedForecast = forecastGroup(forecast);
+      const isFinalForForecast = normalizedForecast === "sideway" ? primary.isFinal : true;
+      if (!isFinalForForecast && !options.provisional) return null;
+      if (!isFinalForForecast) {
+        return { score: null, status: "pending", outcome: primary, delayed: false, provisional: true };
+      }
       let score = scoreForecastOutcome(forecast, primary);
       let outcome = primary;
       let delayed = false;
-      if (score === 0 && primary.isFinal) {
+      if (score === 0 && isFinalForForecast) {
         for (const lag of [1, 2, 3]) {
           const lagOutcome = actualOutcomeForDate(addDays(date, lag));
-          if (!lagOutcome || !lagOutcome.isFinal) continue;
+          const lagIsFinal = normalizedForecast === "sideway" ? lagOutcome?.isFinal : Boolean(lagOutcome);
+          if (!lagOutcome || !lagIsFinal) continue;
           const lagScore = scoreForecastOutcome(forecast, lagOutcome);
           if (lagScore > score) {
             score = Math.min(0.75, lagScore);
@@ -1148,8 +1162,8 @@
           if (score >= 0.75) break;
         }
       }
-      const status = primary.isFinal ? statusFromScore(score, delayed) : (score > 0 ? "partial" : "wrong");
-      return { score, status, outcome, delayed, provisional: !primary.isFinal };
+      const status = statusFromScore(score, delayed);
+      return { score, status, outcome, delayed, provisional: false };
     }
 
     const fusionRuleDefs = [
@@ -1455,7 +1469,7 @@
       const closedDates = state.ohlcv
         .filter((row) => row.timestamp >= FUSION_BACKTEST_START && row.timestamp <= state.latestMarketDate && maps.astro.has(row.timestamp) && maps.index.has(row.timestamp))
         .map((row) => row.timestamp);
-      const finalDates = closedDates.filter((date) => actualOutcomeForDate(date)?.isFinal);
+      const finalDates = closedDates.filter((date) => actualOutcomeForDate(date));
       const rules = fusionRuleDefs
         .map((rule) => evaluateFusionRule(rule, finalDates, maps))
         .filter((rule) => rule.cases > 0)
@@ -1615,6 +1629,7 @@
             status: graded?.status || "pending",
             actual: graded?.outcome?.actual || "pending",
             score: graded?.score ?? null,
+            dayReturn: graded?.outcome?.dayReturn,
             return3d: graded?.outcome?.return3d,
             provisional: Boolean(graded?.provisional),
           };
@@ -1642,7 +1657,7 @@
       const labels = {
         correct: "Correct",
         wrong: "Wrong",
-        partial: "Partial",
+        partial: "1 phần",
         delayed: "Delayed",
         pending: "Pending",
         "no-call": "-",
@@ -1904,12 +1919,14 @@
           date: hit.date,
           status: hit.status,
           actual: hit.outcome.actual,
+          dayReturn: hit.outcome.dayReturn,
           return3d: hit.outcome.return3d,
           score: hit.score,
         })), [
           ["date", "Date"],
-          ["status", "Status"],
+          ["status", "Status", cleanStatusLabel],
           ["actual", "Actual"],
+          ["dayReturn", "1D", pct],
           ["return3d", "3D", pct],
           ["score", "Score", pct],
         ]) : `<p class="muted">No evaluated examples yet.</p>`}
@@ -2091,12 +2108,12 @@
           <div class="scenario" style="border-left-color:${colors[status] || "#fff"}">
             <div class="icon" style="color:${colors[status] || "#fff"}">${icons[status] || "?"}</div>
             <div>
-              <h4>${scenario.date} <span class="tag ${scenario.forecast}">${scenario.forecast}</span> <span class="tag ${status}">${status}</span></h4>
+              <h4>${scenario.date} <span class="tag ${scenario.forecast}">${scenario.forecast}</span> <span class="tag ${status}">${cleanStatusLabel(status)}</span></h4>
               <p>Confidence <b>${pct(scenario.confidence)}</b> from <b>${scenario.matches}</b> analogs. Actual: <b>${actual}</b>${graded.isFinal === false ? ` (${graded.horizon} closed candle window, provisional)` : ""}${scenario.trap_warning ? " . Trap warning active." : ""}</p>
               <p>Astro: ${astroText(astro)}${fusion ? ` | Fusion: <b>${fusion.name}</b> ${pct(fusion.accuracy)} from ${fusion.cases} cases` : ""}</p>
               <p>Similar dates: ${scenario.similar_dates || "-"}</p>
             </div>
-            <div class="muted">${graded.return3d == null ? "" : pct(graded.return3d)}</div>
+            <div class="muted">${graded.dayReturn == null ? "" : `1D ${pct(graded.dayReturn)}`}${graded.return3d == null ? "" : `<br>3D ${pct(graded.return3d)}`}</div>
           </div>
         `;
       }).join("") : `<div class="warn">No forecast reaches the selected confidence and direction filters for ${prefix}.</div>`;
@@ -2154,7 +2171,7 @@
       document.getElementById("fusionNotes").innerHTML = `
         <strong>Fusion method:</strong> selected window <b>${window.label}</b>; active models for anchor month <b>${prefix}</b> use ${monthSet.trainingDates.length} training days before that month (${trainingStart} -> ${trainingEnd}).
         When a new UTC daily candle closes, live OHLCV regrades past calls, then scoreboards and model ranks update automatically.
-        Outcomes are up/down/sideway only; sideway = |3D return| <= 1.5%. Volatility hit is a secondary feature in the rank/model context.
+        Outcomes are up/down/sideway only: up = 1D move >= +3%, down = 1D move <= -3%, sideway = |3D return| <= 1.5%. Volatility hit is a secondary feature in the rank/model context.
       `;
 
       const indexRows = state.data.indices.filter((row) => isDateInWindow(row.date, window));
@@ -2205,7 +2222,7 @@
           <div class="score-card">
             <div class="label">${label}</div>
             <div class="value">${pct(summary.accuracy)}</div>
-            <div class="mini">${summary.total} evaluated | OK ${summary.correct} | +/- ${summary.delayed} | partial ${summary.partial} | wrong ${summary.wrong} | pending ${summary.pending}</div>
+            <div class="mini">${summary.total} evaluated | OK ${summary.correct} | +/- ${summary.delayed} | 1 phần ${summary.partial} | wrong ${summary.wrong} | pending ${summary.pending}</div>
             <div class="bar"><span style="width:${Math.round(summary.accuracy * 100)}%"></span></div>
           </div>
         `;
@@ -2233,13 +2250,13 @@
         <div class="scenario" style="border-left-color:${colors[call.status] || "#fff"}" onclick="showFusionRuleDetail('${call.rule.id}')">
           <div class="icon" style="color:${colors[call.status] || "#fff"}">${icons[call.status] || "?"}</div>
           <div>
-            <h4>${call.date} <span class="tag ${forecastGroup(call.forecast)}">${forecastGroup(call.forecast)}</span> <span class="tag ${call.status}">${call.status}${call.provisional ? " / provisional" : ""}</span></h4>
+            <h4>${call.date} <span class="tag ${forecastGroup(call.forecast)}">${forecastGroup(call.forecast)}</span> <span class="tag ${call.status}">${cleanStatusLabel(call.status)}${call.provisional ? " / provisional" : ""}</span></h4>
             <p>Primary model: <b>${call.rule.name}</b> | model score <b>${pct(call.rule.accuracy)}</b> from <b>${call.rule.cases}</b> historical cases | rank score <b>${pct(call.rule.rankScore)}</b>.</p>
             <p>Astro: ${astroText(call.context.astro)} | Index gap: <b>${call.context.feature ? call.context.feature.gap.toFixed(1) : "-"}</b>${call.context.feature?.oppositePhase ? " | opposite phase" : ""}${call.context.feature?.shock ? " | shock" : ""}</p>
             <p>Supporting models: ${call.support.length ? call.support.map((rule) => `${rule.name} ${pct(rule.accuracy)}`).join(" | ") : "-"}</p>
-            <p>Similar correct/partial dates for primary model: ${call.rule.winningExamples || "-"}</p>
+            <p>Similar winning dates for primary model: ${call.rule.winningExamples || "-"}</p>
           </div>
-          <div class="muted">${call.return3d == null ? "" : pct(call.return3d)}</div>
+          <div class="muted">${call.dayReturn == null ? "" : `1D ${pct(call.dayReturn)}`}${call.return3d == null ? "" : `<br>3D ${pct(call.return3d)}`}</div>
         </div>
       `).join("") : `<div class="warn">No Fusion call reaches the selected filters for ${prefix}.</div>`;
 
@@ -2291,11 +2308,11 @@
           <div class="fusion-event">
             <div class="date">${event.date}</div>
             <div>
-              <p><strong>${event.rule.name}</strong> <span class="tag ${forecastGroup(event.forecast)}">${forecastGroup(event.forecast)}</span> <span class="tag ${event.status}">${event.status}${event.provisional ? " / provisional" : ""}</span></p>
+              <p><strong>${event.rule.name}</strong> <span class="tag ${forecastGroup(event.forecast)}">${forecastGroup(event.forecast)}</span> <span class="tag ${event.status}">${cleanStatusLabel(event.status)}${event.provisional ? " / provisional" : ""}</span></p>
               <p>Astro: ${astroText(astro)}</p>
               <p>Index: ${scenario ? `${scenario.forecast} ${pct(scenario.confidence)} from ${scenario.matches} analogs` : "No scenario call"} | Actual: ${event.actual}</p>
             </div>
-            <div class="score">${pct(event.return3d)}</div>
+            <div class="score">1D ${pct(event.dayReturn)}<br>3D ${pct(event.return3d)}</div>
           </div>
         `;
       }).join("") : `<p class="muted">No evaluated fusion events yet.</p>`;
