@@ -512,86 +512,86 @@ tbody tr:hover {
     <div>
       <p class="eyebrow">Elab Astro Module</p>
       <h1>Bitcoin Astro Scores</h1>
-      <p class="subtitle">Bộ chỉ số 2017-2028, xem theo năm, tháng bắt đầu và cửa sổ 1M/3M/6M để đối chiếu với hệ Index.</p>
+      <p class="subtitle">2017-2028 score set with year, start-month, and 1M/3M/6M windows for comparison with the Index system.</p>
     </div>
-    <div class="status-pill" aria-label="Thông tin dữ liệu">
+    <div class="status-pill" aria-label="Data information">
       <span id="recordCount"></span>
       <span id="dateSpan"></span>
     </div>
   </header>
 
-  <section class="toolbar" aria-label="Bộ lọc">
+  <section class="toolbar" aria-label="Filters">
     <label class="control-group select-field">
-      <span class="control-label">Năm</span>
+      <span class="control-label">Year</span>
       <select id="yearSelect"></select>
     </label>
 
     <label class="control-group select-field">
-      <span class="control-label">Tháng bắt đầu</span>
+      <span class="control-label">Start month</span>
       <select id="monthSelect"></select>
     </label>
 
     <div class="control-group">
-      <span class="control-label">Khoảng xem</span>
-      <div class="segmented" role="group" aria-label="Khoảng xem">
-        <button type="button" data-range="1">1 tháng</button>
-        <button type="button" data-range="3">3 tháng</button>
-        <button type="button" data-range="6">6 tháng</button>
+      <span class="control-label">View range</span>
+      <div class="segmented" role="group" aria-label="View range">
+        <button type="button" data-range="1">1 month</button>
+        <button type="button" data-range="3">3 months</button>
+        <button type="button" data-range="6">6 months</button>
       </div>
     </div>
 
     <label class="control-group select-field">
-      <span class="control-label">Làm mượt</span>
+      <span class="control-label">Smoothing</span>
       <select id="smoothSelect">
-        <option value="auto">Tự động</option>
-        <option value="1">Ngày</option>
-        <option value="7">7 ngày</option>
-        <option value="30">30 ngày</option>
+        <option value="auto">Auto</option>
+        <option value="1">Daily</option>
+        <option value="7">7 days</option>
+        <option value="30">30 days</option>
       </select>
     </label>
 
     <label class="control-group select-field">
-      <span class="control-label">Đánh dấu</span>
+      <span class="control-label">Highlights</span>
       <select id="highlightSelect">
-        <option value="events">Sự kiện</option>
-        <option value="volatility">Biến động cao</option>
-        <option value="none">Không</option>
+        <option value="events">Events</option>
+        <option value="volatility">High volatility</option>
+        <option value="none">None</option>
       </select>
     </label>
   </section>
 
-  <div class="metric-strip" aria-label="Chỉ số hiển thị">
-    <label class="metric-check"><input type="checkbox" data-metric="composite" checked><span class="dot composite"></span>Tổng hợp</label>
-    <label class="metric-check"><input type="checkbox" data-metric="finance" checked><span class="dot finance"></span>Tài chính</label>
-    <label class="metric-check"><input type="checkbox" data-metric="career" checked><span class="dot career"></span>Sự nghiệp</label>
-    <label class="metric-check"><input type="checkbox" data-metric="volatility" checked><span class="dot volatility"></span>Biến động</label>
+  <div class="metric-strip" aria-label="Visible metrics">
+    <label class="metric-check"><input type="checkbox" data-metric="composite" checked><span class="dot composite"></span>Composite</label>
+    <label class="metric-check"><input type="checkbox" data-metric="finance" checked><span class="dot finance"></span>Finance</label>
+    <label class="metric-check"><input type="checkbox" data-metric="career" checked><span class="dot career"></span>Career</label>
+    <label class="metric-check"><input type="checkbox" data-metric="volatility" checked><span class="dot volatility"></span>Volatility</label>
   </div>
 
-  <section class="summary-grid" id="summaryCards" aria-label="Tóm tắt"></section>
+  <section class="summary-grid" id="summaryCards" aria-label="Summary"></section>
 
   <section class="workspace">
     <article class="chart-panel">
       <div class="chart-head">
-        <h2>Diễn biến chỉ số</h2>
+        <h2>Score Trend</h2>
         <div class="range-caption" id="rangeCaption"></div>
       </div>
       <div class="chart-wrap" id="chartWrap">
-        <canvas id="chart" role="img" aria-label="Biểu đồ Bitcoin Astro Scores"></canvas>
+        <canvas id="chart" role="img" aria-label="Bitcoin Astro Scores chart"></canvas>
         <div class="tooltip" id="tooltip"></div>
       </div>
     </article>
 
-    <aside class="side-panel" aria-label="Chi tiết">
+    <aside class="side-panel" aria-label="Details">
       <section class="side-section" id="selectedDetails"></section>
       <section class="side-section">
-        <h2>Ngày cần chú ý</h2>
+        <h2>Notable Dates</h2>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Ngày</th>
-                <th>Nhóm</th>
-                <th>Điểm</th>
+                <th>Date</th>
+                <th>Group</th>
+                <th>Score</th>
               </tr>
             </thead>
             <tbody id="notableRows"></tbody>
@@ -602,7 +602,7 @@ tbody tr:hover {
   </section>
 
   <footer class="footer">
-    <span>Nguồn: bitcoin_astro_scores.xlsx</span>
+    <span>Source: bitcoin_astro_scores.xlsx</span>
     <span id="smoothingNote"></span>
   </footer>
 </main>
@@ -665,7 +665,7 @@ let chartState = {
   plotHeight: 0
 };
 
-const formatNumber = new Intl.NumberFormat("vi-VN", {
+const formatNumber = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
   minimumFractionDigits: 0
 });
@@ -682,7 +682,7 @@ function todayTime() {
 
 function formatDate(value) {
   const date = new Date(typeof value === "number" ? value : parseDate(value));
-  return new Intl.DateTimeFormat("vi-VN", {
+  return new Intl.DateTimeFormat("en-US", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -692,7 +692,7 @@ function formatDate(value) {
 
 function formatShortDate(value) {
   const date = new Date(typeof value === "number" ? value : parseDate(value));
-  return new Intl.DateTimeFormat("vi-VN", {
+  return new Intl.DateTimeFormat("en-US", {
     day: "2-digit",
     month: "2-digit",
     year: "2-digit",
@@ -756,10 +756,10 @@ function compositeScore(point) {
 
 function getRegime(point) {
   const score = compositeScore(point);
-  if (point.volatility >= 75 || score < 40) return { label: "Rủi ro cao", tone: "danger" };
-  if (point.event || point.volatility >= 60 || score < 55) return { label: "Theo dõi", tone: "watch" };
-  if (score >= 70 && point.volatility <= 45) return { label: "Thuận lợi", tone: "good" };
-  return { label: "Cân bằng", tone: "neutral" };
+  if (point.volatility >= 75 || score < 40) return { label: "High Risk", tone: "danger" };
+  if (point.event || point.volatility >= 60 || score < 55) return { label: "Watch", tone: "watch" };
+  if (score >= 70 && point.volatility <= 45) return { label: "Favorable", tone: "good" };
+  return { label: "Balanced", tone: "neutral" };
 }
 
 function getVisibleData() {
@@ -837,11 +837,11 @@ function updateSummary(points) {
   const avgCareer = average(points, "career");
   const avgVolatility = average(points, "volatility");
   els.summaryCards.innerHTML = [
-    statCard("Ngày đang chọn", formatDate(selected.date), selectedRegime.label, selectedRegime.tone),
-    statCard("Tổng hợp", formatNumber.format(compositeScore(selected)), "Trung bình vùng: " + formatNumber.format(avgComposite), "neutral"),
-    statCard("Tài chính", formatNumber.format(selected.finance), "Trung bình vùng: " + formatNumber.format(avgFinance), "neutral"),
-    statCard("Sự nghiệp", formatNumber.format(selected.career), "Trung bình vùng: " + formatNumber.format(avgCareer), "neutral"),
-    statCard("Biến động", formatNumber.format(selected.volatility), eventCount + " ngày sự kiện", selected.volatility >= 75 ? "danger" : "neutral")
+    statCard("Selected Date", formatDate(selected.date), selectedRegime.label, selectedRegime.tone),
+    statCard("Composite", formatNumber.format(compositeScore(selected)), "Window average: " + formatNumber.format(avgComposite), "neutral"),
+    statCard("Finance", formatNumber.format(selected.finance), "Window average: " + formatNumber.format(avgFinance), "neutral"),
+    statCard("Career", formatNumber.format(selected.career), "Window average: " + formatNumber.format(avgCareer), "neutral"),
+    statCard("Volatility", formatNumber.format(selected.volatility), eventCount + " event days", selected.volatility >= 75 ? "danger" : "neutral")
   ].join("");
 }
 
@@ -857,17 +857,17 @@ function statCard(label, value, note, tone) {
 function updateSelectedDetails() {
   const selected = data[state.selectedIndex];
   const regime = getRegime(selected);
-  const eventText = selected.event ? "Có" : "Không";
+  const eventText = selected.event ? "Yes" : "No";
   els.selectedDetails.innerHTML = [
-    '<h2>Ngày đang chọn</h2>',
+    '<h2>Selected Date</h2>',
     '<p class="selected-date">' + formatDate(selected.date) + '</p>',
     '<span class="badge ' + regime.tone + '">' + regime.label + '</span>',
     '<dl class="detail-list">',
-    detailItem("Tổng hợp", formatNumber.format(compositeScore(selected))),
-    detailItem("Tài chính", formatNumber.format(selected.finance)),
-    detailItem("Sự nghiệp", formatNumber.format(selected.career)),
-    detailItem("Biến động", formatNumber.format(selected.volatility)),
-    detailItem("Sự kiện", eventText),
+    detailItem("Composite", formatNumber.format(compositeScore(selected))),
+    detailItem("Finance", formatNumber.format(selected.finance)),
+    detailItem("Career", formatNumber.format(selected.career)),
+    detailItem("Volatility", formatNumber.format(selected.volatility)),
+    detailItem("Event", eventText),
     '</dl>'
   ].join("");
 }
@@ -1054,11 +1054,11 @@ function showTooltip(point, x, y) {
   const regime = getRegime(point);
   els.tooltip.innerHTML = [
     '<strong>' + formatDate(point.date) + ' · ' + regime.label + '</strong>',
-    tooltipRow("Tổng hợp", formatNumber.format(compositeScore(point))),
-    tooltipRow("Tài chính", formatNumber.format(point.finance)),
-    tooltipRow("Sự nghiệp", formatNumber.format(point.career)),
-    tooltipRow("Biến động", formatNumber.format(point.volatility)),
-    tooltipRow("Sự kiện", point.event ? "Có" : "Không")
+    tooltipRow("Composite", formatNumber.format(compositeScore(point))),
+    tooltipRow("Finance", formatNumber.format(point.finance)),
+    tooltipRow("Career", formatNumber.format(point.career)),
+    tooltipRow("Volatility", formatNumber.format(point.volatility)),
+    tooltipRow("Event", point.event ? "Yes" : "No")
   ].join("");
   const wrapRect = els.chartWrap.getBoundingClientRect();
   const left = clamp(x + 14, 10, wrapRect.width - 230);
@@ -1076,9 +1076,9 @@ function updateRangeCaption(points, smoothingWindow) {
   if (!points.length) return;
   const first = points[0];
   const last = points[points.length - 1];
-  const label = state.rangeMonths + "M · " + points.length + " ngày";
+  const label = state.rangeMonths + "M · " + points.length + " days";
   els.rangeCaption.textContent = formatDate(first.date) + " - " + formatDate(last.date) + " · " + label;
-  els.smoothingNote.textContent = "Làm mượt đang dùng: " + (smoothingWindow === 1 ? "ngày" : smoothingWindow + " ngày");
+  els.smoothingNote.textContent = "Active smoothing: " + (smoothingWindow === 1 ? "daily" : smoothingWindow + " days");
 }
 
 function render() {
@@ -1193,7 +1193,7 @@ window.addEventListener("resize", () => {
   window.requestAnimationFrame(() => drawChart(chartState.points));
 });
 
-els.recordCount.textContent = data.length.toLocaleString("vi-VN") + " dòng";
+els.recordCount.textContent = data.length.toLocaleString("en-US") + " rows";
 els.dateSpan.textContent = formatDate(data[0].date) + " - " + formatDate(data[data.length - 1].date);
 render();
 </script>

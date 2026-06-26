@@ -659,7 +659,7 @@
         <div class="card">
           <h3 style="margin-top:0">BTC 5m realtime</h3>
           <iframe src="https://s.tradingview.com/widgetembed/?symbol=BINANCE%3ABTCUSDT&interval=5&theme=dark&style=1&timezone=Etc%2FUTC&hide_side_toolbar=0&allow_symbol_change=1&save_image=0"></iframe>
-          <p class="muted">TradingView handles intraday realtime. UP/DOWN grading uses the closed UTC daily candle; SIDEWAY grading waits for the full 3D window.</p>
+          <p class="muted">TradingView handles intraday realtime. UP, DOWN, and SIDEWAY grading all use the closed UTC daily candle.</p>
         </div>
         <div class="card">
           <div class="toolbar">
@@ -737,7 +737,7 @@
           <div class="outcome-strip">
             <div><strong class="tag up">UP</strong><span>1D move &gt;= +3%</span></div>
             <div><strong class="tag down">DOWN</strong><span>1D move &lt;= -3%</span></div>
-            <div><strong class="tag sideway">SIDEWAY</strong><span>|3D return| &lt;= 1.5%</span></div>
+            <div><strong class="tag sideway">SIDEWAY</strong><span>|1D move| &lt;= 1%</span></div>
           </div>
         </div>
         <div class="toolbar">
@@ -846,8 +846,8 @@
     const parse = (value) => new Date(`${value}T00:00:00Z`);
     const UP_1D_THRESHOLD = 0.03;
     const DOWN_1D_THRESHOLD = -0.03;
-    const SIDEWAY_3D_THRESHOLD = 0.015;
-    const PARTIAL_SIDEWAY_3D_THRESHOLD = 0.03;
+    const SIDEWAY_1D_THRESHOLD = 0.01;
+    const PARTIAL_SIDEWAY_1D_THRESHOLD = 0.02;
 
     function expandCompactDashboard(payload) {
       if (!payload || !payload.compact) return payload;
@@ -882,7 +882,7 @@
     function classifyOutcome(return3d, dayReturn) {
       if (Number(dayReturn) >= UP_1D_THRESHOLD) return "up";
       if (Number(dayReturn) <= DOWN_1D_THRESHOLD) return "down";
-      if (return3d != null && Math.abs(Number(return3d)) <= SIDEWAY_3D_THRESHOLD) return "sideway";
+      if (Number.isFinite(Number(dayReturn)) && Math.abs(Number(dayReturn)) <= SIDEWAY_1D_THRESHOLD) return "sideway";
       return "mixed";
     }
 
@@ -890,7 +890,7 @@
       const normalized = forecastGroup(forecast);
       if (normalized === "up") return Number(dayReturn) > 0 ? 0.5 : 0;
       if (normalized === "down") return Number(dayReturn) < 0 ? 0.5 : 0;
-      if (normalized === "sideway") return return3d != null && Math.abs(Number(return3d)) <= PARTIAL_SIDEWAY_3D_THRESHOLD ? 0.5 : 0;
+      if (normalized === "sideway") return Number.isFinite(Number(dayReturn)) && Math.abs(Number(dayReturn)) <= PARTIAL_SIDEWAY_1D_THRESHOLD ? 0.5 : 0;
       return 0;
     }
 
@@ -916,7 +916,7 @@
         range2d = null;
       }
       const actual = classifyOutcome(return3d, dayReturn);
-      const isFinal = forecastGroup(scenario.forecast) === "sideway" ? horizon >= 3 : true;
+      const isFinal = true;
       let status = "wrong";
       if (!isFinal) {
         status = "pending";
@@ -928,11 +928,13 @@
       if (status === "wrong" && isFinal) {
         for (const lag of [1, 2, 3]) {
           const lagIndex = index + lag;
-          if (lagIndex + 3 >= market.length) continue;
+          if (lagIndex >= market.length) continue;
           const lagFuture = market.slice(lagIndex + 1, lagIndex + 4);
-          const lagReturn = Number(lagFuture[2].close) / Number(market[lagIndex].close) - 1;
+          const lagReturn = lagFuture.length ? Number(lagFuture[Math.min(2, lagFuture.length - 1)].close) / Number(market[lagIndex].close) - 1 : null;
           const lagDayReturn = Number(market[lagIndex].close) / Number(market[lagIndex].open) - 1;
-          if (classifyOutcome(lagReturn, lagDayReturn) === scenario.forecast) status = "delayed";
+          const lagActual = classifyOutcome(lagReturn, lagDayReturn);
+          const lagScore = lagActual === scenario.forecast ? 1 : (lagActual === "mixed" ? partialScoreForForecast(scenario.forecast, lagReturn, lagDayReturn) : 0);
+          if (lagScore > 0) status = "delayed";
         }
       }
       return { status, actual, return3d, range2d, dayReturn, horizon, isFinal };
@@ -982,7 +984,7 @@
         <div class="score-card">
           <div class="label">${label}</div>
           <div class="value">${pct(summary.accuracy)}</div>
-          <div class="mini">${summary.total} evaluated | OK ${summary.correct} | +/- ${summary.delayed} | 1 phần ${summary.partial} | wrong ${summary.wrong}</div>
+          <div class="mini">${summary.total} evaluated | OK ${summary.correct} | +/- ${summary.delayed} | Partial ${summary.partial} | wrong ${summary.wrong}</div>
           <div class="bar"><span style="width:${Math.round(summary.accuracy * 100)}%"></span></div>
         </div>
       `;
@@ -1100,7 +1102,7 @@
         dayReturn,
         wickRange,
         horizon,
-        isFinal: horizon >= 3,
+        isFinal: true,
         volatilityHit: (return3d != null && Math.abs(return3d) > 0.036) || (range2d != null && range2d > 0.04) || Math.abs(dayReturn) >= UP_1D_THRESHOLD || wickRange > 0.055,
       };
       state.outcomeCache.set(date, outcome);
@@ -1139,19 +1141,13 @@
     function scoreForecastAtDate(forecast, date, options = {}) {
       const primary = actualOutcomeForDate(date);
       if (!primary) return null;
-      const normalizedForecast = forecastGroup(forecast);
-      const isFinalForForecast = normalizedForecast === "sideway" ? primary.isFinal : true;
-      if (!isFinalForForecast && !options.provisional) return null;
-      if (!isFinalForForecast) {
-        return { score: null, status: "pending", outcome: primary, delayed: false, provisional: true };
-      }
       let score = scoreForecastOutcome(forecast, primary);
       let outcome = primary;
       let delayed = false;
-      if (score === 0 && isFinalForForecast) {
+      if (score === 0) {
         for (const lag of [1, 2, 3]) {
           const lagOutcome = actualOutcomeForDate(addDays(date, lag));
-          const lagIsFinal = normalizedForecast === "sideway" ? lagOutcome?.isFinal : Boolean(lagOutcome);
+          const lagIsFinal = Boolean(lagOutcome);
           if (!lagOutcome || !lagIsFinal) continue;
           const lagScore = scoreForecastOutcome(forecast, lagOutcome);
           if (lagScore > score) {
@@ -1657,7 +1653,7 @@
       const labels = {
         correct: "Correct",
         wrong: "Wrong",
-        partial: "1 phần",
+        partial: "Partial",
         delayed: "Delayed",
         pending: "Pending",
         "no-call": "-",
@@ -2171,7 +2167,7 @@
       document.getElementById("fusionNotes").innerHTML = `
         <strong>Fusion method:</strong> selected window <b>${window.label}</b>; active models for anchor month <b>${prefix}</b> use ${monthSet.trainingDates.length} training days before that month (${trainingStart} -> ${trainingEnd}).
         When a new UTC daily candle closes, live OHLCV regrades past calls, then scoreboards and model ranks update automatically.
-        Outcomes are up/down/sideway only: up = 1D move >= +3%, down = 1D move <= -3%, sideway = |3D return| <= 1.5%. Volatility hit is a secondary feature in the rank/model context.
+        Outcomes are up/down/sideway only: up = 1D move >= +3%, down = 1D move <= -3%, sideway = |1D move| <= 1%. Volatility hit is a secondary feature in the rank/model context.
       `;
 
       const indexRows = state.data.indices.filter((row) => isDateInWindow(row.date, window));
@@ -2222,7 +2218,7 @@
           <div class="score-card">
             <div class="label">${label}</div>
             <div class="value">${pct(summary.accuracy)}</div>
-            <div class="mini">${summary.total} evaluated | OK ${summary.correct} | +/- ${summary.delayed} | 1 phần ${summary.partial} | wrong ${summary.wrong} | pending ${summary.pending}</div>
+            <div class="mini">${summary.total} evaluated | OK ${summary.correct} | +/- ${summary.delayed} | Partial ${summary.partial} | wrong ${summary.wrong} | pending ${summary.pending}</div>
             <div class="bar"><span style="width:${Math.round(summary.accuracy * 100)}%"></span></div>
           </div>
         `;
