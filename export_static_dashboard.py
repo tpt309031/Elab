@@ -7,10 +7,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from src.quant_core import (
+from quant_core import (
     analysis_tables,
     btc_move_research_summary,
     build_advanced_daily_features,
@@ -19,16 +19,17 @@ from src.quant_core import (
     evaluate_registry_forecast_ledger,
     load_ohlcv,
     pattern_signals,
-    read_daily_learning_state,
     read_private_indices_csv,
     registry_future_forecasts,
     scenario_accuracy_summary,
     scenario_pattern_forecasts,
     update_scenario_ledger,
+    walk_forward_models,
+    write_daily_learning_state,
 )
 
 
-PUBLIC_DATA = ROOT / "public" / "data" / "dashboard.json"
+PUBLIC_DATA = ROOT / "data" / "dashboard.json"
 ROOT_DATA = ROOT / "data" / "dashboard.json"
 SOURCE_NAME = "newdata CSV 2024-2028"
 SOURCE_SLUG = "newdata_csv"
@@ -110,7 +111,18 @@ def main() -> None:
     advanced_daily = build_advanced_daily_features(indices, daily_ohlcv)
     move_research = btc_move_research_summary(advanced_daily)
     ledger_accuracy = scenario_accuracy_summary(scenario_ledger)
-    learning_state = read_daily_learning_state(ROOT / "data" / "learning_state.json")
+    try:
+        background_model = walk_forward_models(dataset, "target_pivot_high_next_N")
+        background_metrics = background_model.metrics
+    except Exception:
+        background_metrics = pd.DataFrame()
+    learning_state = write_daily_learning_state(
+        ROOT / "data" / "learning_state.json",
+        pattern_registry,
+        scenario_ledger,
+        registry_ledger,
+        background_metrics,
+    )
 
     enriched_ohlcv = dataset[
         [
