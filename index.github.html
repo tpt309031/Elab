@@ -233,7 +233,6 @@
     .tag.dump, .tag.down, .tag.risk_down, .tag.wrong { color: #fecaca; border-color: rgba(239,68,68,.45); background: rgba(239,68,68,.10); }
     .tag.sideway, .tag.pending { color: #e5e7eb; border-color: rgba(255,255,255,.25); }
     .tag.volatility, .tag.trap_up { color: #fef3c7; border-color: rgba(234,179,8,.50); background: rgba(234,179,8,.10); }
-    .tag.delayed { color: #fef3c7; border-color: rgba(234,179,8,.50); background: rgba(234,179,8,.10); }
     .tag.partial { color: #dcfce7; border-color: rgba(134,239,172,.50); background: rgba(134,239,172,.08); }
     .scenario {
       display: grid;
@@ -630,9 +629,6 @@
       background: linear-gradient(180deg, rgba(239,68,68,.56) 0 50%, #991b1b 50% 100%);
       border-color: rgba(248,113,113,.48);
     }
-    .calendar-cell.delayed {
-      box-shadow: inset 0 0 0 2px #fbbf24, 0 16px 38px rgba(0,0,0,.30);
-    }
     .calendar-cell.pending {
       opacity: .88;
     }
@@ -1010,23 +1006,11 @@
       } else if (actual === "mixed") {
         status = partialScoreForForecast(scenario.forecast, return3d, dayReturn) > 0 ? "partial" : "wrong";
       }
-      if (status === "wrong" && isFinal) {
-        for (const lag of [1, 2, 3]) {
-          const lagIndex = index + lag;
-          if (lagIndex >= market.length) continue;
-          const lagFuture = market.slice(lagIndex + 1, lagIndex + 4);
-          const lagReturn = lagFuture.length ? Number(lagFuture[Math.min(2, lagFuture.length - 1)].close) / Number(market[lagIndex].close) - 1 : null;
-          const lagDayReturn = Number(market[lagIndex].close) / Number(market[lagIndex].open) - 1;
-          const lagActual = classifyOutcome(lagReturn, lagDayReturn);
-          const lagScore = lagActual === scenario.forecast ? 1 : (lagActual === "mixed" ? partialScoreForForecast(scenario.forecast, lagReturn, lagDayReturn) : 0);
-          if (lagScore > 0) status = "delayed";
-        }
-      }
       return { status, actual, return3d, range2d, dayReturn, horizon, isFinal };
     }
 
     function statusScore(status) {
-      return ({ correct: 1, delayed: 0.75, partial: 0.5, wrong: 0 })[status] ?? null;
+      return ({ correct: 1, partial: 0.5, wrong: 0 })[status] ?? null;
     }
 
     function confidenceBucket(confidence) {
@@ -1057,7 +1041,6 @@
         total,
         accuracy: total ? score / total : 0,
         correct: byStatus.correct || 0,
-        delayed: byStatus.delayed || 0,
         partial: byStatus.partial || 0,
         wrong: byStatus.wrong || 0,
       };
@@ -1069,7 +1052,7 @@
         <div class="score-card">
           <div class="label">${label}</div>
           <div class="value">${pct(summary.accuracy)}</div>
-          <div class="mini">${summary.total} evaluated | OK ${summary.correct} | +/- ${summary.delayed} | Partial ${summary.partial} | wrong ${summary.wrong}</div>
+          <div class="mini">${summary.total} evaluated | Correct ${summary.correct} | Partial ${summary.partial} | Wrong ${summary.wrong}</div>
           <div class="bar"><span style="width:${Math.round(summary.accuracy * 100)}%"></span></div>
         </div>
       `;
@@ -1215,9 +1198,8 @@
       return null;
     }
 
-    function statusFromScore(score, delayed) {
+    function statusFromScore(score) {
       if (score == null) return "pending";
-      if (delayed && score > 0) return "delayed";
       if (score >= 0.99) return "correct";
       if (score >= 0.49) return "partial";
       return "wrong";
@@ -1226,25 +1208,9 @@
     function scoreForecastAtDate(forecast, date, options = {}) {
       const primary = actualOutcomeForDate(date);
       if (!primary) return null;
-      let score = scoreForecastOutcome(forecast, primary);
-      let outcome = primary;
-      let delayed = false;
-      if (score === 0) {
-        for (const lag of [1, 2, 3]) {
-          const lagOutcome = actualOutcomeForDate(addDays(date, lag));
-          const lagIsFinal = Boolean(lagOutcome);
-          if (!lagOutcome || !lagIsFinal) continue;
-          const lagScore = scoreForecastOutcome(forecast, lagOutcome);
-          if (lagScore > score) {
-            score = Math.min(0.75, lagScore);
-            outcome = lagOutcome;
-            delayed = true;
-          }
-          if (score >= 0.75) break;
-        }
-      }
-      const status = statusFromScore(score, delayed);
-      return { score, status, outcome, delayed, provisional: false };
+      const score = scoreForecastOutcome(forecast, primary);
+      const status = statusFromScore(score);
+      return { score, status, outcome: primary, provisional: false };
     }
 
     const fusionRuleDefs = [
@@ -1470,7 +1436,6 @@
         total,
         accuracy: total ? score / total : 0,
         correct: byStatus.correct || 0,
-        delayed: byStatus.delayed || 0,
         partial: byStatus.partial || 0,
         wrong: byStatus.wrong || 0,
       };
@@ -1516,7 +1481,6 @@
         cases: summary.total,
         accuracy: summary.accuracy,
         correct: summary.correct,
-        delayed: summary.delayed,
         partial: summary.partial,
         wrong: summary.wrong,
         recent90Cases: recent90.total,
@@ -1739,7 +1703,6 @@
         correct: "Correct",
         wrong: "Wrong",
         partial: "Partial",
-        delayed: "Delayed",
         pending: "Pending",
         "no-call": "-",
       };
@@ -1753,7 +1716,7 @@
 
     function evaluationMix(items) {
       const rows = (items || []).map((item) => item.status || item.graded?.status || "pending");
-      const correct = rows.filter((status) => status === "correct" || status === "delayed").length;
+      const correct = rows.filter((status) => status === "correct").length;
       const partial = rows.filter((status) => status === "partial").length;
       const wrong = rows.filter((status) => status === "wrong").length;
       const pending = rows.filter((status) => status === "pending").length;
@@ -1792,7 +1755,7 @@
             <span class="mix-segment wrong" style="width:${Math.max(0, mix.wrongShare * 100)}%"></span>
           </div>
           <div class="mix-legend">
-            <span><i class="mix-dot correct"></i>Correct includes delayed</span>
+            <span><i class="mix-dot correct"></i>Correct</span>
             <span><i class="mix-dot partial"></i>Partial</span>
             <span><i class="mix-dot wrong"></i>Wrong</span>
           </div>
@@ -1896,7 +1859,7 @@
           </div>
         `);
       }
-      const evaluated = calls.filter((call) => call.score != null || ["correct", "delayed", "partial", "wrong"].includes(call.status)).length;
+      const evaluated = calls.filter((call) => call.score != null || ["correct", "partial", "wrong"].includes(call.status)).length;
       const pending = calls.filter((call) => call.status === "pending").length;
       target.innerHTML = `
         <div class="calendar-title">
@@ -2027,7 +1990,6 @@
         total: evaluated.length,
         accuracy: evaluated.length ? score / evaluated.length : 0,
         correct: byStatus.correct || 0,
-        delayed: byStatus.delayed || 0,
         partial: byStatus.partial || 0,
         wrong: byStatus.wrong || 0,
         pending: calls.filter((call) => call.status === "pending").length,
@@ -2334,8 +2296,8 @@
       renderFutureCalendar(prefix, scenarios);
       renderConfidenceScoreboard(prefix);
 
-      const colors = { pending: "#fff", correct: "#22c55e", wrong: "#ef4444", partial: "#86efac", delayed: "#eab308" };
-      const icons = { pending: "?", correct: "OK", wrong: "X", partial: "~", delayed: "+/-" };
+      const colors = { pending: "#fff", correct: "#22c55e", wrong: "#ef4444", partial: "#86efac" };
+      const icons = { pending: "?", correct: "OK", wrong: "X", partial: "~" };
       const astroByDate = astroMap();
       document.getElementById("futureNotes").innerHTML = scenarios.length ? scenarios.map((scenario) => {
         const graded = evaluateScenario(scenario);
@@ -2461,7 +2423,7 @@
           <div class="score-card">
             <div class="label">${label}</div>
             <div class="value">${pct(summary.accuracy)}</div>
-            <div class="mini">${summary.total} evaluated | OK ${summary.correct} | +/- ${summary.delayed} | Partial ${summary.partial} | wrong ${summary.wrong} | pending ${summary.pending}</div>
+            <div class="mini">${summary.total} evaluated | Correct ${summary.correct} | Partial ${summary.partial} | Wrong ${summary.wrong} | pending ${summary.pending}</div>
             <div class="bar"><span style="width:${Math.round(summary.accuracy * 100)}%"></span></div>
           </div>
         `;
@@ -2483,8 +2445,8 @@
         </div>
       `;
 
-      const colors = { pending: "#fff", correct: "#22c55e", wrong: "#ef4444", partial: "#86efac", delayed: "#eab308" };
-      const icons = { pending: "?", correct: "OK", wrong: "X", partial: "~", delayed: "+/-" };
+      const colors = { pending: "#fff", correct: "#22c55e", wrong: "#ef4444", partial: "#86efac" };
+      const icons = { pending: "?", correct: "OK", wrong: "X", partial: "~" };
       document.getElementById("fusionCalls").innerHTML = calls.length ? calls.map((call) => `
         <div class="scenario" style="border-left-color:${colors[call.status] || "#fff"}" onclick="showFusionRuleDetail('${call.rule.id}')">
           <div class="icon" style="color:${colors[call.status] || "#fff"}">${icons[call.status] || "?"}</div>

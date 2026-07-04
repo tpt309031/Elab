@@ -686,18 +686,6 @@ def scenario_pattern_forecasts(
                 ) > 0 else "wrong"
             else:
                 status = "wrong"
-            if status == "wrong" and is_final_for_forecast and forecast in {"up", "down", "sideway"}:
-                delayed_scores = []
-                for lag in [1, 2, 3]:
-                    delayed_actual, delayed_return_3d, _, _, delayed_is_final, delayed_day_return = realized(current["date"] + pd.Timedelta(days=lag))
-                    if delayed_actual is not None:
-                        delayed_scores.append(
-                            1.0 if delayed_actual == forecast
-                            else partial_score_for_forecast(forecast, delayed_return_3d, delayed_day_return)
-                            if delayed_actual == "mixed" else 0.0
-                        )
-                if delayed_scores and max(delayed_scores) > 0:
-                    status = "delayed"
         rows.append({
             "date": current["date"], "forecast": forecast, "confidence": confidence,
             "matches": len(match_positions), "mean_similarity": np.mean(match_scores),
@@ -770,18 +758,6 @@ def update_scenario_ledger(
             status = "partial"
         else:
             status = "wrong"
-        if status == "wrong" and is_final_for_forecast:
-            delayed_scores = []
-            for lag in [1, 2, 3]:
-                delayed_actual, delayed_return_3d, _, _, delayed_is_final, delayed_day_return = realized(pd.Timestamp(row["date"]) + pd.Timedelta(days=lag))
-                if delayed_actual is not None:
-                    delayed_scores.append(
-                        1.0 if delayed_actual == forecast
-                        else partial_score_for_forecast(forecast, delayed_return_3d, delayed_day_return)
-                        if delayed_actual == "mixed" else 0.0
-                    )
-            if delayed_scores and max(delayed_scores) > 0:
-                status = "delayed"
         ledger.loc[row_index, ["actual", "status", "actual_return_3d", "actual_range_2d", "evaluated_at"]] = [
             actual, status, return_3d, range_2d, now_text,
         ]
@@ -791,15 +767,14 @@ def update_scenario_ledger(
 
 
 def scenario_accuracy_summary(ledger: pd.DataFrame) -> pd.DataFrame:
-    realized = ledger[ledger["status"].isin(["correct", "wrong", "partial", "delayed"])].copy()
+    realized = ledger[ledger["status"].isin(["correct", "wrong", "partial"])].copy()
     if realized.empty:
         return pd.DataFrame()
-    realized["score"] = realized["status"].map({"correct": 1.0, "partial": 0.5, "delayed": 0.75, "wrong": 0.0})
+    realized["score"] = realized["status"].map({"correct": 1.0, "partial": 0.5, "wrong": 0.0})
     return realized.groupby("forecast").agg(
         evaluated=("date", "size"), calibrated_accuracy=("score", "mean"),
         correct=("status", lambda series: (series == "correct").sum()),
         partial=("status", lambda series: (series == "partial").sum()),
-        delayed=("status", lambda series: (series == "delayed").sum()),
         wrong=("status", lambda series: (series == "wrong").sum()),
     ).reset_index()
 
@@ -1133,7 +1108,7 @@ def write_daily_learning_state(
         "last_learning_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "active_patterns": int((registry["status"] == "active").sum()),
         "candidate_patterns": int((registry["status"] == "candidate").sum()),
-        "scenario_evaluated": int(scenario_ledger["status"].isin(["correct", "wrong", "partial", "delayed"]).sum()),
+        "scenario_evaluated": int(scenario_ledger["status"].isin(["correct", "wrong", "partial"]).sum()),
         "registry_evaluated": int(registry_ledger.get("evaluation", pd.Series(dtype=str)).isin(["correct", "wrong", "acceptable"]).sum()),
         "model_metrics": model_metrics.to_dict("records"),
     }
