@@ -439,6 +439,58 @@
     .legend-swatch.down { background: #dc2626; }
     .legend-swatch.split { background: linear-gradient(180deg, rgba(16,185,129,.72) 0 50%, rgba(239,68,68,.82) 50% 100%); }
     .legend-swatch.no-call { background: #4b5563; }
+    .accuracy-mix {
+      margin: 0 0 16px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.035);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .mix-summary {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      color: #e5e7eb;
+      font-size: 12px;
+    }
+    .mix-summary strong {
+      color: #f8fafc;
+      font-size: 13px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .mix-summary span { color: var(--muted); text-align: right; }
+    .mix-bar {
+      display: flex;
+      width: 100%;
+      height: 14px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+    }
+    .mix-segment { min-width: 0; transition: width .18s ease; }
+    .mix-segment.correct { background: linear-gradient(90deg, #10b981, #34d399); }
+    .mix-segment.partial { background: linear-gradient(90deg, #bef264, #86efac); }
+    .mix-segment.wrong { background: linear-gradient(90deg, #ef4444, #b91c1c); }
+    .mix-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+      color: #d1d5db;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .mix-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .mix-dot { width: 9px; height: 9px; border-radius: 999px; display: inline-block; }
+    .mix-dot.correct { background: #10b981; }
+    .mix-dot.partial { background: #86efac; }
+    .mix-dot.wrong { background: #ef4444; }
     .calendar-grid {
       display: grid;
       grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -621,8 +673,40 @@
       .calendar-title { align-items: flex-start; flex-direction: column; }
     }
     @media (max-width: 680px) {
-      .fusion-calendar { overflow-x: auto; }
-      .calendar-grid { min-width: 720px; }
+      .toolbar label { flex: 1 1 calc(50% - 8px); min-width: 0; }
+      .toolbar select, .toolbar input { width: 100%; box-sizing: border-box; margin-top: 5px; }
+      .fusion-calendar { overflow: visible; padding: 10px; border-radius: 12px; margin-left: -6px; margin-right: -6px; }
+      .calendar-title { gap: 10px; margin-bottom: 12px; }
+      .calendar-title-main { width: 100%; gap: 8px; justify-content: space-between; }
+      .calendar-nav { width: 32px; height: 32px; min-width: 32px; border-radius: 9px; font-size: 20px; }
+      .calendar-heading { text-align: center; flex: 1; }
+      .calendar-heading strong { font-size: 20px; }
+      .calendar-heading span { font-size: 10px; line-height: 1.35; }
+      .calendar-legend { justify-content: flex-start; gap: 5px; max-width: none; }
+      .calendar-legend span { padding: 4px 6px; font-size: 8px; gap: 4px; letter-spacing: .03em; }
+      .legend-swatch { width: 10px; height: 10px; border-radius: 3px; }
+      .accuracy-mix { padding: 9px; margin-bottom: 12px; border-radius: 10px; }
+      .mix-summary { align-items: flex-start; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+      .mix-summary span { text-align: left; font-size: 10px; }
+      .mix-legend { gap: 7px; font-size: 9px; }
+      .calendar-grid { gap: 4px; width: 100%; min-width: 0; }
+      .calendar-head { padding: 3px 0 5px; font-size: 8px; letter-spacing: .06em; }
+      .calendar-cell, .calendar-cell.empty { min-height: 78px; padding: 5px 4px; border-radius: 9px; gap: 4px; box-shadow: 0 8px 22px rgba(0,0,0,.25); }
+      .calendar-cell:hover { transform: none; }
+      .calendar-date-number { font-size: 11px; }
+      .calendar-day { gap: 3px; }
+      .calendar-day-tag { display: none; }
+      .calendar-move { font-size: clamp(12px, 4.2vw, 17px); line-height: 1; letter-spacing: -.03em; }
+      .calendar-status { align-items: flex-start; flex-direction: column; gap: 2px; font-size: 7px; line-height: 1.08; letter-spacing: .02em; }
+      .calendar-status span { white-space: normal; overflow: visible; text-overflow: clip; }
+    }
+    @media (max-width: 420px) {
+      main, .wrap { padding: 12px; }
+      .card { padding: 12px; }
+      .toolbar label { flex-basis: 100%; }
+      .calendar-cell, .calendar-cell.empty { min-height: 70px; padding: 4px 3px; }
+      .calendar-move { font-size: clamp(11px, 4vw, 15px); }
+      .calendar-status { font-size: 6.5px; }
     }
   </style>
 </head>
@@ -681,6 +765,7 @@
           <label>Min confidence <input id="futureThreshold" type="number" min="0.36" max="0.95" step="0.01" value="0.36"></label>
         </div>
         <div id="futureChart" class="plot small"></div>
+        <div id="futureCalendar" class="fusion-calendar forecast-calendar"></div>
         <details class="report-panel">
           <summary>Future scenario reports</summary>
           <div class="report-body">
@@ -1666,6 +1751,73 @@
       return String(prediction || "-").toUpperCase();
     }
 
+    function evaluationMix(items) {
+      const rows = (items || []).map((item) => item.status || item.graded?.status || "pending");
+      const correct = rows.filter((status) => status === "correct" || status === "delayed").length;
+      const partial = rows.filter((status) => status === "partial").length;
+      const wrong = rows.filter((status) => status === "wrong").length;
+      const pending = rows.filter((status) => status === "pending").length;
+      const evaluated = correct + partial + wrong;
+      return {
+        correct,
+        partial,
+        wrong,
+        pending,
+        evaluated,
+        correctShare: evaluated ? correct / evaluated : 0,
+        partialShare: evaluated ? partial / evaluated : 0,
+        wrongShare: evaluated ? wrong / evaluated : 0,
+      };
+    }
+
+    function renderAccuracyMixBar(items, label) {
+      const mix = evaluationMix(items);
+      if (!mix.evaluated) {
+        return `
+          <div class="accuracy-mix">
+            <div class="mix-summary"><strong>${label}</strong><span>No closed predictions yet | pending ${mix.pending}</span></div>
+            <div class="mix-bar"><span class="mix-segment correct" style="width:0%"></span><span class="mix-segment partial" style="width:0%"></span><span class="mix-segment wrong" style="width:0%"></span></div>
+          </div>
+        `;
+      }
+      return `
+        <div class="accuracy-mix">
+          <div class="mix-summary">
+            <strong>${label}</strong>
+            <span>${mix.evaluated} evaluated | Correct ${pct(mix.correctShare)} | Partial ${pct(mix.partialShare)} | Wrong ${pct(mix.wrongShare)} | Pending ${mix.pending}</span>
+          </div>
+          <div class="mix-bar" aria-label="${label} accuracy split">
+            <span class="mix-segment correct" style="width:${Math.max(0, mix.correctShare * 100)}%"></span>
+            <span class="mix-segment partial" style="width:${Math.max(0, mix.partialShare * 100)}%"></span>
+            <span class="mix-segment wrong" style="width:${Math.max(0, mix.wrongShare * 100)}%"></span>
+          </div>
+          <div class="mix-legend">
+            <span><i class="mix-dot correct"></i>Correct includes delayed</span>
+            <span><i class="mix-dot partial"></i>Partial</span>
+            <span><i class="mix-dot wrong"></i>Wrong</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function shiftFutureMonth(delta) {
+      const yearSelect = document.getElementById("futureYear");
+      const monthSelect = document.getElementById("futureMonth");
+      if (!yearSelect || !monthSelect) return;
+      const current = parse(`${String(yearSelect.value)}-${String(monthSelect.value).padStart(2, "0")}-01`);
+      current.setUTCMonth(current.getUTCMonth() + delta);
+      const nextYear = String(current.getUTCFullYear());
+      const nextMonth = String(current.getUTCMonth() + 1);
+      const yearOptions = Array.from(yearSelect.options || []).map((option) => String(option.value));
+      if (yearOptions.length && !yearOptions.includes(nextYear)) return;
+      yearSelect.value = nextYear;
+      updateFutureMonths();
+      const monthOptions = Array.from(monthSelect.options || []).map((option) => String(option.value));
+      if (monthOptions.length && !monthOptions.includes(nextMonth)) return;
+      monthSelect.value = nextMonth;
+      renderFuture();
+    }
+
     function shiftFusionMonth(delta) {
       const yearSelect = document.getElementById("fusionYear");
       const monthSelect = document.getElementById("fusionMonth");
@@ -1682,6 +1834,95 @@
       if (monthOptions.length && !monthOptions.includes(nextMonth)) return;
       monthSelect.value = nextMonth;
       renderFusion();
+    }
+
+    function renderFutureCalendar(prefix, scenarios) {
+      const target = document.getElementById("futureCalendar");
+      if (!target) return;
+      const start = parse(`${prefix}-01`);
+      if (!start || Number.isNaN(start.getTime())) {
+        target.innerHTML = "";
+        return;
+      }
+      const end = new Date(start);
+      end.setUTCMonth(end.getUTCMonth() + 1);
+      const dayCount = Math.round((end - start) / 86400000);
+      const leadingBlanks = start.getUTCDay();
+      const callByDate = new Map();
+      (scenarios || []).forEach((scenario) => {
+        const graded = scenario.graded || evaluateScenario(scenario);
+        const status = graded.status || scenario.status || "pending";
+        const call = {
+          ...scenario,
+          forecast: forecastGroup(scenario.forecast),
+          confidence: Number(scenario.confidence),
+          graded,
+          status,
+          actual: graded.actual || scenario.actual || "pending",
+          dayReturn: graded.dayReturn,
+          return3d: graded.return3d,
+        };
+        const existing = callByDate.get(call.date);
+        if (!existing || Number(call.confidence) > Number(existing.confidence)) callByDate.set(call.date, call);
+      });
+      const calls = [...callByDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+      const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const monthLabel = start.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+      const today = dateKey(new Date());
+      const cells = [];
+      for (let index = 0; index < leadingBlanks; index += 1) {
+        cells.push(`<div class="calendar-cell empty" aria-hidden="true"></div>`);
+      }
+      for (let day = 1; day <= dayCount; day += 1) {
+        const date = `${prefix}-${String(day).padStart(2, "0")}`;
+        const call = callByDate.get(date);
+        const daily = dailyMoveForDate(date);
+        const prediction = call ? forecastGroup(call.forecast) : "no-call";
+        const status = call ? (call.status || "pending") : "no-call";
+        const statusClass = call ? `${prediction} ${status}` : "no-call";
+        const actual = call ? (call.actual || "pending") : "-";
+        const confidence = call ? pct(call.confidence) : "-";
+        const move = daily ? signedPct(daily.move) : "-";
+        const moveClass = !daily ? "flat" : daily.move > 0.001 ? "positive" : daily.move < -0.001 ? "negative" : "flat";
+        const dayName = weekdays[parse(date).getUTCDay()];
+        const todayClass = date === today ? " today" : "";
+        const provisional = call?.graded?.isFinal === false ? " / provisional" : "";
+        const aria = `${date}. ${cleanPredictionLabel(prediction)}. ${cleanStatusLabel(status)}${provisional}. Move ${move}. Actual ${actual}. Confidence ${confidence}.`;
+        cells.push(`
+          <div class="calendar-cell ${statusClass}${todayClass}" aria-label="${aria}">
+            <div class="calendar-day"><span class="calendar-date-number">${day}</span><span class="calendar-day-tag">${dayName}</span></div>
+            <div class="calendar-move ${moveClass}">${move}</div>
+            <div class="calendar-status"><span>${cleanPredictionLabel(prediction)}</span><span>${cleanStatusLabel(status)}${provisional}</span></div>
+          </div>
+        `);
+      }
+      const evaluated = calls.filter((call) => call.score != null || ["correct", "delayed", "partial", "wrong"].includes(call.status)).length;
+      const pending = calls.filter((call) => call.status === "pending").length;
+      target.innerHTML = `
+        <div class="calendar-title">
+          <div class="calendar-title-main">
+            <button class="calendar-nav" type="button" onclick="shiftFutureMonth(-1)" aria-label="Previous Future month">&#8249;</button>
+            <div class="calendar-heading">
+              <div class="calendar-eyebrow">Future Forecast Calendar</div>
+              <strong>${monthLabel}</strong>
+              <span>${calls.length} calls | ${evaluated} evaluated | ${pending} pending | Move = daily open-to-close return</span>
+            </div>
+            <button class="calendar-nav" type="button" onclick="shiftFutureMonth(1)" aria-label="Next Future month">&#8250;</button>
+          </div>
+          <div class="calendar-legend" aria-label="Calendar color legend">
+            <span><i class="legend-swatch up"></i>UP</span>
+            <span><i class="legend-swatch sideway"></i>SIDEWAY</span>
+            <span><i class="legend-swatch down"></i>DOWN</span>
+            <span><i class="legend-swatch split"></i>Wrong split</span>
+            <span><i class="legend-swatch no-call"></i>No call</span>
+          </div>
+        </div>
+        ${renderAccuracyMixBar(calls, `${monthLabel} Future accuracy split`)}
+        <div class="calendar-grid">
+          ${weekdays.map((day) => `<div class="calendar-head">${day}</div>`).join("")}
+          ${cells.join("")}
+        </div>
+      `;
     }
 
     function renderFusionCalendar(prefix, calls) {
@@ -1749,6 +1990,7 @@
             <span><i class="legend-swatch no-call"></i>No call</span>
           </div>
         </div>
+        ${renderAccuracyMixBar(calls, `${monthLabel} Fusion accuracy split`)}
         <div class="calendar-grid">
           ${weekdays.map((day) => `<div class="calendar-head">${day}</div>`).join("")}
           ${cells.join("")}
@@ -2089,6 +2331,7 @@
         margin: { l: 52, r: 24, t: 24, b: 38 },
       }, { responsive: true, displaylogo: false });
 
+      renderFutureCalendar(prefix, scenarios);
       renderConfidenceScoreboard(prefix);
 
       const colors = { pending: "#fff", correct: "#22c55e", wrong: "#ef4444", partial: "#86efac", delayed: "#eab308" };
