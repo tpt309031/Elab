@@ -918,6 +918,9 @@
       outcomeCache: null,
       indexFeatureCache: null,
       indexPositionByDate: null,
+      scenarioMapCache: null,
+      trainingDateCache: null,
+      indexDailyModelCache: null,
     };
     const fmt = new Intl.NumberFormat("en-US");
     const pct = (value) => value == null || Number.isNaN(Number(value)) ? "-" : `${(Number(value) * 100).toFixed(1)}%`;
@@ -1058,10 +1061,20 @@
       `;
     }
 
-    function renderConfidenceScoreboard(prefix) {
-      const evaluated = evaluatedScenarioRows();
-      const selectedMonth = evaluated.filter((row) => row.date.startsWith(prefix));
-      const groups = [
+    function renderConfidenceScoreboard(prefix, rowsOverride = null) {
+      const evaluated = rowsOverride
+        ? rowsOverride.map((row) => {
+          const status = row.status || row.graded?.status || "pending";
+          return { ...row, status, score: row.score ?? statusScore(status) };
+        }).filter((row) => row.score != null)
+        : evaluatedScenarioRows();
+      const selectedMonth = rowsOverride ? evaluated : evaluated.filter((row) => row.date.startsWith(prefix));
+      const groups = rowsOverride ? [
+        [`${prefix} daily coverage calls`, selectedMonth],
+        ["Pump calls", selectedMonth.filter((row) => forecastGroup(row.forecast) === "up")],
+        ["Dump calls", selectedMonth.filter((row) => forecastGroup(row.forecast) === "down")],
+        ["Sideway calls", selectedMonth.filter((row) => forecastGroup(row.forecast) === "sideway")],
+      ] : [
         ["All closed predictions", evaluated],
         [`${prefix} closed predictions`, selectedMonth],
         ["Pump models", evaluated.filter((row) => row.forecast === "up")],
@@ -1093,12 +1106,14 @@
     }
 
     function scenarioMap() {
+      if (state.scenarioMapCache) return state.scenarioMapCache;
       const map = new Map();
       (state.data.scenario_forecasts || []).forEach((row) => {
         if (!map.has(row.date)) map.set(row.date, []);
         map.get(row.date).push(row);
       });
       map.forEach((rows) => rows.sort((a, b) => Number(b.confidence) - Number(a.confidence)));
+      state.scenarioMapCache = map;
       return map;
     }
 
@@ -1114,23 +1129,43 @@
       const row = rows[idx];
       const prev = rows[idx - 1] || row;
       const prev2 = rows[idx - 2] || prev;
+      const prev3 = rows[idx - 3] || prev2;
       const btcChange = Number(row.index_BTC) - Number(prev.index_BTC);
       const meChange = Number(row.index_me) - Number(prev.index_me);
       const btcAccel = btcChange - (Number(prev.index_BTC) - Number(prev2.index_BTC));
       const meAccel = meChange - (Number(prev.index_me) - Number(prev2.index_me));
+      const btcSlope3 = Number(row.index_BTC) - Number(prev3.index_BTC);
+      const meSlope3 = Number(row.index_me) - Number(prev3.index_me);
       const gap = Number(row.index_BTC) - Number(row.index_me);
       const prevGap = Number(prev.index_BTC) - Number(prev.index_me);
+      const weekday = parse(date).getUTCDay();
+      const isWeekend = weekday === 0 || weekday === 6;
+      const preWeekend = weekday === 5;
+      const postWeekend = weekday === 1;
+      const shock = Math.abs(btcChange) >= 18 || Math.abs(meChange) >= 18 || Math.abs(btcAccel) >= 18 || Math.abs(meAccel) >= 18;
+      const crossed = Math.sign(gap) !== Math.sign(prevGap) && Math.sign(gap) !== 0 && Math.sign(prevGap) !== 0;
+      const leadLagHint = isWeekend || ((preWeekend || postWeekend) && (shock || crossed))
+        ? "weekend_lead_lag"
+        : (shock || crossed ? "event_lead_lag" : "normal_timing");
       const feature = {
         row,
+        idx,
+        weekday,
+        isWeekend,
+        preWeekend,
+        postWeekend,
         btcChange,
         meChange,
         btcAccel,
         meAccel,
+        btcSlope3,
+        meSlope3,
         gap,
         samePhase: Math.sign(btcChange) === Math.sign(meChange) && Math.sign(btcChange) !== 0,
         oppositePhase: Math.sign(btcChange) === -Math.sign(meChange) && Math.sign(btcChange) !== 0,
-        crossed: Math.sign(gap) !== Math.sign(prevGap) && Math.sign(gap) !== 0 && Math.sign(prevGap) !== 0,
-        shock: Math.abs(btcChange) >= 18 || Math.abs(meChange) >= 18 || Math.abs(btcAccel) >= 18 || Math.abs(meAccel) >= 18,
+        crossed,
+        shock,
+        leadLagHint,
         traderOverheat: Number(row.index_me) - Number(row.index_BTC) >= 22,
       };
       state.indexFeatureCache.set(date, feature);
@@ -1203,6 +1238,277 @@
       if (score >= 0.99) return "correct";
       if (score >= 0.49) return "partial";
       return "wrong";
+    }
+
+    const DAILY_FORECASTS = ["up", "down", "sideway"];
+
+    function valueBucket(value, low, high, labels) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return "missing";
+      if (number <= low) return labels[0];
+      if (number >= high) return labels[2];
+      return labels[1];
+    }
+
+    function slopeBucket(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return "flat";
+      if (number >= 10) return "rising";
+      if (number <= -10) return "falling";
+      return "flat";
+    }
+
+    function gapBucket(gap) {
+      const number = Number(gap);
+      if (!Number.isFinite(number)) return "gap_missing";
+      if (number >= 24) return "btc_leads_wide";
+      if (number <= -24) return "trader_leads_wide";
+      if (Math.abs(number) <= 10) return "balanced_gap";
+      return number > 0 ? "btc_leads" : "trader_leads";
+    }
+
+    function phaseBucket(feature) {
+      if (!feature) return "phase_missing";
+      if (feature.samePhase) {
+        const net = Number(feature.btcChange) + Number(feature.meChange);
+        return net >= 0 ? "same_phase_up" : "same_phase_down";
+      }
+      if (feature.oppositePhase) return "opposite_phase";
+      return "phase_flat";
+    }
+
+    function weekdayBucket(feature) {
+      if (!feature) return "weekday_missing";
+      if (feature.isWeekend) return "weekend";
+      if (feature.preWeekend) return "pre_weekend";
+      if (feature.postWeekend) return "post_weekend";
+      return "midweek";
+    }
+
+    function dailyIndexModelKey(date, mode = "specific") {
+      const feature = indexFeature(date);
+      if (!feature) return null;
+      const btcLevel = valueBucket(feature.row.index_BTC, 23, 77, ["btc_extreme_low", "btc_mid", "btc_extreme_high"]);
+      const meLevel = valueBucket(feature.row.index_me, 23, 77, ["trader_extreme_low", "trader_mid", "trader_extreme_high"]);
+      const phase = phaseBucket(feature);
+      const shock = feature.shock ? (Number(feature.btcChange) + Number(feature.meChange) >= 0 ? "shock_up" : "shock_down") : "no_shock";
+      const cross = feature.crossed ? (feature.gap >= 0 ? "cross_bullish" : "cross_bearish") : "no_cross";
+      const timing = feature.leadLagHint || "normal_timing";
+      const weekday = weekdayBucket(feature);
+      if (mode === "specific") {
+        return [phase, gapBucket(feature.gap), btcLevel, meLevel, shock, cross, timing, weekday].join("|");
+      }
+      if (mode === "delay") {
+        return [phase, shock, cross, timing, weekday].join("|");
+      }
+      if (mode === "coarse") {
+        return [phase, gapBucket(feature.gap), slopeBucket(feature.btcSlope3), slopeBucket(feature.meSlope3)].join("|");
+      }
+      return [phase, gapBucket(feature.gap)].join("|");
+    }
+
+    function topScenarioForDate(date) {
+      const rows = scenarioMap().get(date) || [];
+      return rows[0] || null;
+    }
+
+    function scenarioCandidateForDate(date) {
+      const row = topScenarioForDate(date);
+      if (!row) return null;
+      const forecast = forecastGroup(row.forecast);
+      const graded = scoreForecastAtDate(forecast, date);
+      return {
+        ...row,
+        date,
+        forecast,
+        confidence: Number(row.confidence) || 0,
+        matches: Number(row.matches) || 0,
+        modelName: "Index analog shape model",
+        source: "analog",
+        graded,
+        status: graded?.status || row.status || "pending",
+        actual: graded?.outcome?.actual || row.actual || "pending",
+        score: graded?.score ?? statusScore(row.status),
+        dayReturn: graded?.outcome?.dayReturn,
+        return3d: graded?.outcome?.return3d,
+      };
+    }
+
+    function astroRegimeBucket(astro) {
+      if (!astro) return "astro_missing";
+      const volatility = Number(astro.volatility);
+      const composite = Number(astro.composite);
+      const volBucket = volatility >= 70 ? "astro_high_vol" : volatility >= 45 ? "astro_mid_vol" : "astro_low_vol";
+      const compBucket = composite >= 65 ? "astro_favorable" : composite <= 42 ? "astro_stressed" : "astro_neutral";
+      return [astro.regime || "astro_regime_unknown", volBucket, compBucket, astro.event ? "astro_event" : "no_astro_event"].join("|");
+    }
+
+    function dailyFusionModelKey(date, mode = "specific", maps = state.fusion?.maps) {
+      const indexKey = dailyIndexModelKey(date, mode === "specific" ? "coarse" : "loose");
+      const astro = maps?.astro?.get(date);
+      const scenario = topScenarioForDate(date);
+      const scenarioKey = scenario ? `scenario_${forecastGroup(scenario.forecast)}` : "scenario_missing";
+      if (mode === "specific") return [indexKey, astroRegimeBucket(astro), scenarioKey].join("|");
+      if (mode === "delay") {
+        const feature = indexFeature(date);
+        return [dailyIndexModelKey(date, "delay"), astro ? (astro.event ? "astro_event" : "no_astro_event") : "astro_missing", scenarioKey].join("|");
+      }
+      return [indexKey, astro ? (astro.regime || "astro_unknown") : "astro_missing"].join("|");
+    }
+
+    function historicalModelDates(beforeDate, requireAstro = false) {
+      if (!state.trainingDateCache) state.trainingDateCache = new Map();
+      const cacheKey = `${beforeDate}|${requireAstro ? "astro" : "index"}|${state.latestMarketDate}`;
+      if (state.trainingDateCache.has(cacheKey)) return state.trainingDateCache.get(cacheKey);
+      const astroByDate = requireAstro ? astroMap() : null;
+      const dates = (state.data.indices || [])
+        .map((row) => row.date)
+        .filter((date) => date >= FUSION_BACKTEST_START && date < beforeDate && date <= state.latestMarketDate)
+        .filter((date) => !requireAstro || astroByDate.has(date))
+        .filter((date) => actualOutcomeForDate(date));
+      state.trainingDateCache.set(cacheKey, dates);
+      return dates;
+    }
+
+    function forecastStatsFromDates(dates) {
+      const scoredByForecast = DAILY_FORECASTS.map((forecast) => {
+        const scored = (dates || []).map((date) => {
+          const graded = scoreForecastAtDate(forecast, date);
+          if (!graded || graded.score == null) return null;
+          return { date, forecast, ...graded };
+        }).filter(Boolean);
+        const cases = scored.length;
+        const totalScore = scored.reduce((sum, row) => sum + row.score, 0);
+        const recent = scored.filter((row) => row.date >= recentCutoff(90));
+        const recentScore = recent.reduce((sum, row) => sum + row.score, 0);
+        const returns = scored.filter((row) => row.outcome?.return3d != null).map((row) => Number(row.outcome.return3d));
+        const volHits = scored.filter((row) => row.outcome?.volatilityHit).length;
+        const wins = scored.filter((row) => row.score >= 0.5).slice(-8).map((row) => row.date);
+        return {
+          forecast,
+          cases,
+          confidence: cases ? totalScore / cases : 0,
+          accuracy: cases ? totalScore / cases : 0,
+          recent90Cases: recent.length,
+          recent90Accuracy: recent.length ? recentScore / recent.length : 0,
+          volatilityHitRate: cases ? volHits / cases : 0,
+          averageReturn3d: returns.length ? returns.reduce((sum, value) => sum + value, 0) / returns.length : 0,
+          correct: scored.filter((row) => row.status === "correct").length,
+          partial: scored.filter((row) => row.status === "partial").length,
+          wrong: scored.filter((row) => row.status === "wrong").length,
+          winningExamples: wins.join(", ") || "-",
+          hits: scored,
+        };
+      }).filter((row) => row.cases > 0);
+      return scoredByForecast.sort((a, b) => (b.confidence - a.confidence) || (b.cases - a.cases))[0] || null;
+    }
+
+    function bestPredictionFromBuckets(date, trainingDates, keyMakers, options = {}) {
+      const minCases = Number(options.minCases ?? 6);
+      const label = options.label || "Daily ensemble";
+      let bestUnderSampled = null;
+      for (const [level, keyMaker] of keyMakers) {
+        const targetKey = keyMaker(date);
+        if (!targetKey) continue;
+        const matches = trainingDates.filter((candidateDate) => keyMaker(candidateDate) === targetKey);
+        const stats = forecastStatsFromDates(matches);
+        if (!stats) continue;
+        const prediction = { ...stats, modelName: `${label}: ${level}`, bucket: targetKey, bucketLevel: level, similar_dates: stats.winningExamples };
+        if (!bestUnderSampled || prediction.confidence > bestUnderSampled.confidence || prediction.cases > bestUnderSampled.cases) {
+          bestUnderSampled = prediction;
+        }
+        if (prediction.cases >= minCases) return prediction;
+      }
+      const globalStats = forecastStatsFromDates(trainingDates);
+      if (globalStats) {
+        return { ...globalStats, modelName: `${label}: broad historical prior`, bucket: "global", bucketLevel: "global", similar_dates: globalStats.winningExamples };
+      }
+      return bestUnderSampled || {
+        forecast: "sideway",
+        confidence: 0,
+        accuracy: 0,
+        cases: 0,
+        recent90Cases: 0,
+        recent90Accuracy: 0,
+        volatilityHitRate: 0,
+        averageReturn3d: 0,
+        correct: 0,
+        partial: 0,
+        wrong: 0,
+        winningExamples: "-",
+        similar_dates: "-",
+        hits: [],
+        modelName: `${label}: cold-start baseline`,
+        bucket: "cold_start",
+        bucketLevel: "cold_start",
+      };
+    }
+
+    function buildPredictionCall(date, prediction, overrides = {}) {
+      const forecast = forecastGroup(prediction.forecast);
+      const graded = scoreForecastAtDate(forecast, date);
+      const feature = indexFeature(date);
+      return {
+        date,
+        forecast,
+        confidence: Number(prediction.confidence ?? prediction.accuracy ?? 0),
+        matches: Number(prediction.cases ?? prediction.matches ?? 0),
+        mean_similarity: null,
+        trap_warning: Boolean(feature?.traderOverheat),
+        similar_dates: prediction.similar_dates || prediction.winningExamples || "-",
+        modelName: prediction.modelName || "Daily ensemble",
+        bucket: prediction.bucket || "-",
+        bucketLevel: prediction.bucketLevel || "-",
+        source: overrides.source || "daily_ensemble",
+        graded,
+        status: graded?.status || "pending",
+        actual: graded?.outcome?.actual || "pending",
+        score: graded?.score ?? null,
+        dayReturn: graded?.outcome?.dayReturn,
+        return3d: graded?.outcome?.return3d,
+        ...overrides,
+      };
+    }
+
+    function indexDailyPredictionForDate(date, prefix) {
+      if (!state.indexDailyModelCache) state.indexDailyModelCache = new Map();
+      const cacheKey = `${prefix}|${date}|${state.latestMarketDate}`;
+      if (state.indexDailyModelCache.has(cacheKey)) return state.indexDailyModelCache.get(cacheKey);
+      const trainingDates = historicalModelDates(`${prefix}-01`, false);
+      const prediction = bestPredictionFromBuckets(date, trainingDates, [
+        ["specific lead-lag index bucket", (candidateDate) => dailyIndexModelKey(candidateDate, "specific")],
+        ["delay-aware index bucket", (candidateDate) => dailyIndexModelKey(candidateDate, "delay")],
+        ["coarse slope/phase bucket", (candidateDate) => dailyIndexModelKey(candidateDate, "coarse")],
+        ["loose phase/gap bucket", (candidateDate) => dailyIndexModelKey(candidateDate, "loose")],
+      ], { label: "Index daily ensemble", minCases: 6 });
+      const call = buildPredictionCall(date, prediction, { trainingCutoff: `${prefix}-01` });
+      state.indexDailyModelCache.set(cacheKey, call);
+      return call;
+    }
+
+    function futureDatesForMonth(prefix) {
+      return (state.data.indices || [])
+        .filter((row) => row.date.startsWith(prefix))
+        .map((row) => row.date)
+        .sort();
+    }
+
+    function futureCallsForMonth(prefix, options = {}) {
+      const direction = options.direction || "All";
+      return futureDatesForMonth(prefix)
+        .map((date) => {
+          const analog = scenarioCandidateForDate(date);
+          const ensemble = indexDailyPredictionForDate(date, prefix);
+          const candidates = [analog, ensemble].filter(Boolean).sort((a, b) => {
+            const aRank = Number(a.confidence || 0) + Math.min(Number(a.matches || 0), 24) / 2400 + (a.source === "analog" ? 0.015 : 0);
+            const bRank = Number(b.confidence || 0) + Math.min(Number(b.matches || 0), 24) / 2400 + (b.source === "analog" ? 0.015 : 0);
+            return bRank - aRank;
+          });
+          return candidates[0] || null;
+        })
+        .filter(Boolean)
+        .filter((call) => forecastMatchesDirection(call.forecast, direction))
+        .sort((a, b) => a.date.localeCompare(b.date));
     }
 
     function scoreForecastAtDate(forecast, date, options = {}) {
@@ -1544,6 +1850,7 @@
         maps,
         monthlyModelCache: new Map(),
         walkForwardCache: new Map(),
+        dailyRuleCache: new Map(),
       };
     }
 
@@ -1646,6 +1953,42 @@
         .sort((a, b) => a.date.localeCompare(b.date));
     }
 
+    function fusionDailyPredictionForDate(date, prefix, modelSet) {
+      if (!state.fusion) return null;
+      const trainingDates = (modelSet?.trainingDates?.length ? modelSet.trainingDates : historicalModelDates(`${prefix}-01`, true))
+        .filter((candidateDate) => state.fusion.maps.astro.has(candidateDate));
+      const prediction = bestPredictionFromBuckets(date, trainingDates, [
+        ["astro-index confluence bucket", (candidateDate) => dailyFusionModelKey(candidateDate, "specific", state.fusion.maps)],
+        ["delay-aware astro-index bucket", (candidateDate) => dailyFusionModelKey(candidateDate, "delay", state.fusion.maps)],
+        ["coarse astro-index bucket", (candidateDate) => dailyFusionModelKey(candidateDate, "coarse", state.fusion.maps)],
+      ], { label: "Fusion daily ensemble", minCases: 6 });
+      const rule = {
+        id: `fusion_daily_ensemble_${date.replaceAll("-", "")}`,
+        name: prediction.modelName,
+        family: "Fusion",
+        forecast: prediction.forecast,
+        cases: prediction.cases,
+        accuracy: prediction.confidence,
+        correct: prediction.correct || 0,
+        partial: prediction.partial || 0,
+        wrong: prediction.wrong || 0,
+        recent90Cases: prediction.recent90Cases || 0,
+        recent90Accuracy: prediction.recent90Accuracy || prediction.confidence || 0,
+        volatilityHitRate: prediction.volatilityHitRate || 0,
+        averageReturn3d: prediction.averageReturn3d || 0,
+        winningExamples: prediction.winningExamples || prediction.similar_dates || "-",
+        examples: prediction.winningExamples || "-",
+        rankScore: 0,
+        bucket: prediction.bucket,
+        bucketLevel: prediction.bucketLevel,
+        synthetic: true,
+        hits: prediction.hits || [],
+      };
+      rule.rankScore = rankScore(rule);
+      state.fusion.dailyRuleCache?.set(rule.id, rule);
+      return { prediction, rule };
+    }
+
     function fusionCallsForMonth(prefix, options = {}) {
       if (!state.fusion) return [];
       const direction = options.direction || "All";
@@ -1660,15 +2003,24 @@
           const applicable = rules
             .filter((rule) => forecastMatchesDirection(rule.forecast, direction) && rule.applies(context))
             .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
-          if (!applicable.length) return null;
-          const rule = applicable[0];
+          const fallback = fusionDailyPredictionForDate(date, prefix, modelSet);
+          const fallbackRule = fallback && forecastMatchesDirection(fallback.rule.forecast, direction) ? fallback.rule : null;
+          const selected = [applicable[0], fallbackRule]
+            .filter(Boolean)
+            .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases))[0];
+          if (!selected) return null;
+          const rule = selected;
+          const support = applicable
+            .filter((item) => item.id !== rule.id)
+            .slice(0, 3);
+          if (fallbackRule && fallbackRule.id !== rule.id) support.push(fallbackRule);
           const graded = scoreForecastAtDate(rule.forecast, date, { provisional: true });
           return {
             date,
             rule,
             forecast: rule.forecast,
             confidence: rule.accuracy,
-            support: applicable.slice(1, 4),
+            support,
             context,
             graded,
             status: graded?.status || "pending",
@@ -2107,13 +2459,14 @@
 
     function showFusionRuleDetail(ruleId) {
       if (!state.fusion) state.fusion = buildFusionModel();
-      const rule = state.fusion?.fusionRules.find((item) => item.id === ruleId);
+      const rule = state.fusion?.fusionRules.find((item) => item.id === ruleId) || state.fusion?.dailyRuleCache?.get(ruleId);
       const target = document.getElementById("fusionDetail");
       if (!rule || !target) return;
       const recent = rule.hits.slice(-10).reverse();
       target.innerHTML = `
         <h4>${rule.name} <span class="tag ${forecastGroup(rule.forecast)}">${forecastGroup(rule.forecast)}</span></h4>
         <p>Rank score <b>${pct(rule.rankScore)}</b> | Accuracy <b>${pct(rule.accuracy)}</b> | Cases <b>${rule.cases}</b> | Volatility feature hit <b>${pct(rule.volatilityHitRate)}</b>.</p>
+        ${rule.synthetic ? `<p class="muted">Daily ensemble model. It is retrained from historical days before the selected month; lead/lag and weekend timing are input features only, not scoring labels.</p>` : ""}
         <p class="muted">Volatility is only an environment feature here; the forecast outcome remains ${forecastGroup(rule.forecast)}.</p>
         ${recent.length ? table(recent.map((hit) => ({
           date: hit.date,
@@ -2159,6 +2512,9 @@
       state.outcomeCache = null;
       state.indexFeatureCache = null;
       state.indexPositionByDate = null;
+      state.scenarioMapCache = null;
+      state.trainingDateCache = null;
+      state.indexDailyModelCache = null;
       state.fusion = null;
     }
 
@@ -2193,7 +2549,7 @@
       const years = [...new Set(state.ohlcv.map((row) => row.timestamp.slice(0, 4)))].sort().reverse();
       populateSelect(document.getElementById("histYear"), years, years[0]);
       updateHistMonths();
-      const scenarioYears = [...new Set(state.data.scenario_forecasts.map((row) => row.date.slice(0, 4)))].sort();
+      const scenarioYears = [...new Set(state.data.indices.map((row) => row.date.slice(0, 4)))].sort();
       const preferredYear = state.latestMarketDate?.slice(0, 4) || scenarioYears[0];
       populateSelect(document.getElementById("futureYear"), scenarioYears, scenarioYears.includes(preferredYear) ? preferredYear : scenarioYears[0]);
       updateFutureMonths();
@@ -2210,7 +2566,7 @@
 
     function updateFutureMonths() {
       const year = document.getElementById("futureYear").value;
-      const rows = state.data.scenario_forecasts.filter((row) => row.date.startsWith(year));
+      const rows = state.data.indices.filter((row) => row.date.startsWith(year));
       const months = [...new Set(rows.map((row) => Number(row.date.slice(5, 7))))].sort((a, b) => a - b);
       const preferredMonth = Number(state.latestMarketDate?.slice(5, 7));
       populateSelect(document.getElementById("futureMonth"), months, months.includes(preferredMonth) ? preferredMonth : months[0]);
@@ -2276,9 +2632,9 @@
       const threshold = Number(document.getElementById("futureThreshold").value);
       const prefix = `${year}-${month}`;
       const indexRows = state.data.indices.filter((row) => row.date.startsWith(prefix));
-      const scenarios = state.data.scenario_forecasts
-        .filter((row) => row.date.startsWith(prefix) && Number(row.confidence) >= threshold && Number(row.matches) >= 5)
-        .filter((row) => direction === "All" || row.forecast === direction)
+      const scenarios = futureCallsForMonth(prefix, { direction });
+      const highlightedScenarios = scenarios
+        .filter((row) => Number(row.confidence) >= threshold)
         .sort((a, b) => a.date.localeCompare(b.date));
       Plotly.newPlot("futureChart", [
         { type: "scatter", mode: "lines+markers", name: "index_BTC", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_BTC), line: { color: "#f7931a", width: 3 } },
@@ -2294,13 +2650,14 @@
       }, { responsive: true, displaylogo: false });
 
       renderFutureCalendar(prefix, scenarios);
-      renderConfidenceScoreboard(prefix);
+      renderConfidenceScoreboard(prefix, scenarios);
 
       const colors = { pending: "#fff", correct: "#22c55e", wrong: "#ef4444", partial: "#86efac" };
       const icons = { pending: "?", correct: "OK", wrong: "X", partial: "~" };
       const astroByDate = astroMap();
-      document.getElementById("futureNotes").innerHTML = scenarios.length ? scenarios.map((scenario) => {
-        const graded = evaluateScenario(scenario);
+      const noteRows = highlightedScenarios.length ? highlightedScenarios : scenarios;
+      document.getElementById("futureNotes").innerHTML = noteRows.length ? noteRows.map((scenario) => {
+        const graded = scenario.graded || evaluateScenario(scenario);
         const status = graded.status || scenario.status || "pending";
         const actual = graded.actual || scenario.actual || "pending";
         const astro = astroByDate.get(scenario.date);
@@ -2310,14 +2667,14 @@
             <div class="icon" style="color:${colors[status] || "#fff"}">${icons[status] || "?"}</div>
             <div>
               <h4>${scenario.date} <span class="tag ${scenario.forecast}">${scenario.forecast}</span> <span class="tag ${status}">${cleanStatusLabel(status)}</span></h4>
-              <p>Confidence <b>${pct(scenario.confidence)}</b> from <b>${scenario.matches}</b> analogs. Actual: <b>${actual}</b>${graded.isFinal === false ? ` (${graded.horizon} closed candle window, provisional)` : ""}${scenario.trap_warning ? " . Trap warning active." : ""}</p>
+              <p><b>${scenario.modelName || "Index model"}</b> | confidence <b>${pct(scenario.confidence)}</b> from <b>${scenario.matches}</b> historical cases. Actual: <b>${actual}</b>${graded.isFinal === false ? ` (${graded.horizon} closed candle window, provisional)` : ""}${scenario.trap_warning ? " . Trap warning active." : ""}</p>
               <p>Astro: ${astroText(astro)}${fusion ? ` | Fusion: <b>${fusion.name}</b> ${pct(fusion.accuracy)} from ${fusion.cases} cases` : ""}</p>
               <p>Similar dates: ${scenario.similar_dates || "-"}</p>
             </div>
             <div class="muted">${graded.dayReturn == null ? "" : `1D ${pct(graded.dayReturn)}`}${graded.return3d == null ? "" : `<br>3D ${pct(graded.return3d)}`}</div>
           </div>
         `;
-      }).join("") : `<div class="warn">No forecast reaches the selected confidence and direction filters for ${prefix}.</div>`;
+      }).join("") : `<div class="warn">No forecast reaches the selected direction filter for ${prefix}.</div>`;
 
       const registry = state.data.registry_ledger
         .filter((row) => row.date.startsWith(prefix))
