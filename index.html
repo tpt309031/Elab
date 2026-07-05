@@ -758,7 +758,7 @@
           <label>Future year <select id="futureYear"></select></label>
           <label>Future month <select id="futureMonth"></select></label>
           <label>Direction <select id="futureDirection"><option>All</option><option>up</option><option>down</option><option>sideway</option></select></label>
-          <label>Min confidence <input id="futureThreshold" type="number" min="0.36" max="0.95" step="0.01" value="0.36"></label>
+          <label>Min model score <input id="futureThreshold" type="number" min="0.20" max="0.95" step="0.01" value="0.25"></label>
         </div>
         <div id="futureChart" class="plot small"></div>
         <div id="futureCalendar" class="fusion-calendar forecast-calendar"></div>
@@ -816,9 +816,9 @@
             <p class="muted">Fusion forecasts only three main states: <b>up</b>, <b>down</b>, and <b>sideway</b>. Volatility, shock, phase, gap, and astro events are features used to score and rank models.</p>
           </div>
           <div class="outcome-strip">
-            <div><strong class="tag up">UP</strong><span>1D move &gt;= +3%</span></div>
-            <div><strong class="tag down">DOWN</strong><span>1D move &lt;= -3%</span></div>
-            <div><strong class="tag sideway">SIDEWAY</strong><span>|1D move| &lt;= 1%</span></div>
+            <div><strong class="tag up">UP</strong><span>Correct >= +3%; Partial +0.1% to +3%</span></div>
+            <div><strong class="tag down">DOWN</strong><span>Correct <= -3%; Partial -0.1% to -3%</span></div>
+            <div><strong class="tag sideway">SIDEWAY</strong><span>Correct -1% to +1%; no Partial</span></div>
           </div>
         </div>
         <div class="toolbar">
@@ -826,7 +826,7 @@
           <label>Fusion month <select id="fusionMonth"></select></label>
           <label>Range <select id="fusionRange"><option>1M</option><option>3M</option><option>6M</option></select></label>
           <label>Direction <select id="fusionDirection"><option>All</option><option>up</option><option>down</option><option>sideway</option></select></label>
-          <label>Min model score <input id="fusionThreshold" type="number" min="0.36" max="0.95" step="0.01" value="0.36"></label>
+          <label>Min model score <input id="fusionThreshold" type="number" min="0.20" max="0.95" step="0.01" value="0.25"></label>
           <label>Model set <select id="fusionSet"><option value="active">Active monthly</option><option value="all">All qualifying</option><option value="standby">Standby</option></select></label>
         </div>
         <div class="layer-toggle">
@@ -929,7 +929,9 @@
     const UP_1D_THRESHOLD = 0.03;
     const DOWN_1D_THRESHOLD = -0.03;
     const SIDEWAY_1D_THRESHOLD = 0.01;
-    const PARTIAL_SIDEWAY_1D_THRESHOLD = 0.02;
+    const PARTIAL_UP_MIN_1D = 0.001;
+    const PARTIAL_DOWN_MAX_1D = -0.001;
+    const DEFAULT_MODEL_SCORE_THRESHOLD = 0.25;
 
     function expandCompactDashboard(payload) {
       if (!payload || !payload.compact) return payload;
@@ -972,21 +974,9 @@
       const normalized = forecastGroup(forecast);
       const move = Number(dayReturn);
       if (!Number.isFinite(move)) return 0;
-      if (normalized === "up") return move > 0 && move < UP_1D_THRESHOLD ? 0.5 : 0;
-      if (normalized === "down") return move < 0 && move > DOWN_1D_THRESHOLD ? 0.5 : 0;
-      if (normalized === "sideway") return Math.abs(move) > SIDEWAY_1D_THRESHOLD && Math.abs(move) <= PARTIAL_SIDEWAY_1D_THRESHOLD ? 0.5 : 0;
+      if (normalized === "up") return move >= PARTIAL_UP_MIN_1D && move < UP_1D_THRESHOLD ? 0.5 : 0;
+      if (normalized === "down") return move <= PARTIAL_DOWN_MAX_1D && move > DOWN_1D_THRESHOLD ? 0.5 : 0;
       return 0;
-    }
-
-    function allowsLagCredit(forecast, outcome) {
-      if (!outcome) return false;
-      const normalized = forecastGroup(forecast);
-      const move = Number(outcome.dayReturn);
-      if (!Number.isFinite(move)) return false;
-      if (normalized === "up") return move > DOWN_1D_THRESHOLD;
-      if (normalized === "down") return move < UP_1D_THRESHOLD;
-      if (normalized === "sideway") return Math.abs(move) < UP_1D_THRESHOLD;
-      return false;
     }
 
     function evaluateScenario(scenario) {
@@ -1011,32 +1001,17 @@
         range2d = null;
       }
       const actual = classifyOutcome(return3d, dayReturn);
+      const forecast = forecastGroup(scenario.forecast);
       const isFinal = true;
       let status = "wrong";
       if (!isFinal) {
         status = "pending";
-      } else if (actual === scenario.forecast) {
+      } else if (actual === forecast) {
         status = "correct";
-      } else if (actual === "mixed") {
-        status = partialScoreForForecast(scenario.forecast, return3d, dayReturn) > 0 ? "partial" : "wrong";
+      } else {
+        status = partialScoreForForecast(forecast, return3d, dayReturn) > 0 ? "partial" : "wrong";
       }
-      let lagged = false;
-      if (status === "wrong" && isFinal && allowsLagCredit(scenario.forecast, { actual, dayReturn })) {
-        for (const lag of [1, 2, 3]) {
-          const lagIndex = index + lag;
-          if (lagIndex >= market.length) continue;
-          const lagFuture = market.slice(lagIndex + 1, lagIndex + 4);
-          const lagReturn = lagFuture.length ? Number(lagFuture[Math.min(2, lagFuture.length - 1)].close) / Number(market[lagIndex].close) - 1 : null;
-          const lagDayReturn = Number(market[lagIndex].close) / Number(market[lagIndex].open) - 1;
-          const lagActual = classifyOutcome(lagReturn, lagDayReturn);
-          const lagScore = lagActual === scenario.forecast ? 1 : (lagActual === "mixed" ? partialScoreForForecast(scenario.forecast, lagReturn, lagDayReturn) : 0);
-          if (lagScore > 0) {
-            status = "partial";
-            lagged = true;
-            break;
-          }
-        }
-      }
+      const lagged = false;
       return { status, actual, return3d, range2d, dayReturn, horizon, isFinal, lagged };
     }
 
@@ -1050,7 +1025,9 @@
       if (value >= 0.66) return "66-79% confidence";
       if (value >= 0.55) return "55-65% confidence";
       if (value >= 0.45) return "45-54% confidence";
-      return "36-44% confidence";
+      if (value >= 0.36) return "36-44% confidence";
+      if (value >= 0.25) return "25-35% model score";
+      return "20-24% model score";
     }
 
     function evaluatedScenarioRows() {
@@ -1235,17 +1212,16 @@
       const normalized = forecastGroup(forecast);
       if (normalized === "up") {
         if (outcome.actual === "up") return 1;
-        if (outcome.actual === "mixed" && partialScoreForForecast(normalized, outcome.return3d, outcome.dayReturn) > 0) return 0.5;
+        if (partialScoreForForecast(normalized, outcome.return3d, outcome.dayReturn) > 0) return 0.5;
         return 0;
       }
       if (normalized === "down") {
         if (outcome.actual === "down") return 1;
-        if (outcome.actual === "mixed" && partialScoreForForecast(normalized, outcome.return3d, outcome.dayReturn) > 0) return 0.5;
+        if (partialScoreForForecast(normalized, outcome.return3d, outcome.dayReturn) > 0) return 0.5;
         return 0;
       }
       if (normalized === "sideway") {
         if (outcome.actual === "sideway") return 1;
-        if (outcome.actual === "mixed" && partialScoreForForecast(normalized, outcome.return3d, outcome.dayReturn) > 0) return 0.5;
         return 0;
       }
       return null;
@@ -1263,20 +1239,7 @@
       if (!primary) return null;
       let score = scoreForecastOutcome(forecast, primary);
       let outcome = primary;
-      let lagged = false;
-      if (score === 0 && allowsLagCredit(forecast, primary)) {
-        for (const lag of [1, 2, 3]) {
-          const lagOutcome = actualOutcomeForDate(addDays(date, lag));
-          if (!lagOutcome) continue;
-          const lagScore = scoreForecastOutcome(forecast, lagOutcome);
-          if (lagScore > score) {
-            score = Math.min(0.75, lagScore);
-            outcome = lagOutcome;
-            lagged = true;
-          }
-          if (score >= 0.75) break;
-        }
-      }
+      const lagged = false;
       const status = statusFromScore(score);
       return { score, status, outcome, lagged, provisional: false };
     }
@@ -1415,7 +1378,7 @@
         .map((rule) => evaluateIndexRule(rule, finalDates, maps))
         .filter((rule) => rule.cases > 0)
         .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
-      const active = rules.filter((rule) => rule.cases >= 6 && rule.accuracy >= 0.36).slice(0, INDEX_ACTIVE_LIMIT);
+      const active = rules.filter((rule) => rule.cases >= 6 && rule.accuracy >= DEFAULT_MODEL_SCORE_THRESHOLD).slice(0, INDEX_ACTIVE_LIMIT);
       return {
         rules,
         active,
@@ -1429,7 +1392,7 @@
       };
     }
 
-    function indexModelSetForMonth(prefix, threshold = 0.36) {
+    function indexModelSetForMonth(prefix, threshold = DEFAULT_MODEL_SCORE_THRESHOLD) {
       if (!state.indexModel) return { active: [], standby: [], all: [], trainingDates: [] };
       const cacheKey = `${prefix}|${Number(threshold).toFixed(3)}`;
       if (state.indexModel.monthlyModelCache.has(cacheKey)) return state.indexModel.monthlyModelCache.get(cacheKey);
@@ -1455,7 +1418,7 @@
       if (!state.indexModel) state.indexModel = buildIndexModel();
       if (!state.indexModel) return [];
       const direction = options.direction || "All";
-      const threshold = Number(options.threshold ?? 0.36);
+      const threshold = Number(options.threshold ?? DEFAULT_MODEL_SCORE_THRESHOLD);
       const modelSet = indexModelSetForMonth(prefix, threshold);
       const rules = modelSet.active.filter((rule) => rule.cases >= 6 && rule.accuracy >= threshold);
       return (state.data.indices || [])
@@ -1799,7 +1762,7 @@
         .filter((rule) => rule.cases > 0)
         .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
       const fusionRules = rules.filter((rule) => rule.family === "Fusion");
-      const active = fusionRules.filter((rule) => rule.cases >= 6 && rule.accuracy >= 0.36).slice(0, FUSION_ACTIVE_LIMIT);
+      const active = fusionRules.filter((rule) => rule.cases >= 6 && rule.accuracy >= DEFAULT_MODEL_SCORE_THRESHOLD).slice(0, FUSION_ACTIVE_LIMIT);
       const events = closedDates
         .map((date) => {
           const context = fusionContextForDate(date, maps);
@@ -1855,7 +1818,7 @@
         .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases))[0] || null;
     }
 
-    function fusionModelSetForMonth(prefix, threshold = 0.36) {
+    function fusionModelSetForMonth(prefix, threshold = DEFAULT_MODEL_SCORE_THRESHOLD) {
       if (!state.fusion) return { active: [], standby: [], all: [], trainingDates: [] };
       if (!state.fusion.monthlyModelCache) state.fusion.monthlyModelCache = new Map();
       const cacheKey = `${prefix}|${Number(threshold).toFixed(3)}`;
@@ -1931,7 +1894,7 @@
     function fusionCallsForMonth(prefix, options = {}) {
       if (!state.fusion) return [];
       const direction = options.direction || "All";
-      const threshold = Number(options.threshold ?? 0.36);
+      const threshold = Number(options.threshold ?? DEFAULT_MODEL_SCORE_THRESHOLD);
       const modelSetName = options.modelSet || "active";
       const modelSet = fusionModelSetForMonth(prefix, threshold);
       const rules = (modelSetName === "standby" ? modelSet.standby : modelSetName === "all" ? modelSet.all : modelSet.active)
@@ -2243,7 +2206,7 @@
       `;
     }
 
-    function fusionWalkForwardCalls(threshold = 0.36) {
+    function fusionWalkForwardCalls(threshold = DEFAULT_MODEL_SCORE_THRESHOLD) {
       if (!state.fusion) return [];
       if (!state.fusion.walkForwardCache) state.fusion.walkForwardCache = new Map();
       const cacheKey = Number(threshold).toFixed(3);
@@ -2588,7 +2551,7 @@
           <div>
             <h4>Index model research <span class="tag">from 2024</span></h4>
             <p>Future calls use the highest-ranked index rules trained on <b>${monthSet.trainingDates.length}</b> historical closed days (${trainingStart} -> ${trainingEnd}) before the selected month, or all closed history for forward months.</p>
-            <p>Strict scoring: UP = 1D >= +3%, DOWN = 1D <= -3%, SIDEWAY = |1D| <= 1%. Strong opposite moves cannot be graded Partial.</p>
+            <p>Scoring: UP correct >= +3%, partial +0.1% to +3%, wrong <= 0%; DOWN correct <= -3%, partial -0.1% to -3%, wrong >= 0%; SIDEWAY correct from -1% to +1% and has no Partial grade.</p>
           </div>
         </div>
       `;
@@ -2665,7 +2628,7 @@
       document.getElementById("fusionNotes").innerHTML = `
         <strong>Fusion method:</strong> selected window <b>${window.label}</b>; active models for anchor month <b>${prefix}</b> use ${monthSet.trainingDates.length} training days before that month (${trainingStart} -> ${trainingEnd}).
         When a new UTC daily candle closes, live OHLCV regrades past calls, then scoreboards and model ranks update automatically.
-        Outcomes are up/down/sideway only: up = 1D move >= +3%, down = 1D move <= -3%, sideway = |1D move| <= 1%. Volatility hit is a secondary feature in the rank/model context.
+        Outcomes are up/down/sideway only. UP is correct at >= +3% and partial from +0.1% to +3%; DOWN is correct at <= -3% and partial from -0.1% to -3%; SIDEWAY is correct only from -1% to +1% and never receives Partial. Volatility hit is a secondary feature in the rank/model context.
       `;
 
       const indexRows = state.data.indices.filter((row) => isDateInWindow(row.date, window));
