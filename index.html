@@ -911,6 +911,7 @@
       ohlcv: [],
       latestMarketDate: null,
       staticMarketDate: null,
+      indexModel: null,
       fusion: null,
       marketRowsCache: null,
       marketRowsCacheLatest: null,
@@ -969,10 +970,23 @@
 
     function partialScoreForForecast(forecast, return3d, dayReturn) {
       const normalized = forecastGroup(forecast);
-      if (normalized === "up") return Number(dayReturn) > 0 ? 0.5 : 0;
-      if (normalized === "down") return Number(dayReturn) < 0 ? 0.5 : 0;
-      if (normalized === "sideway") return Number.isFinite(Number(dayReturn)) && Math.abs(Number(dayReturn)) <= PARTIAL_SIDEWAY_1D_THRESHOLD ? 0.5 : 0;
+      const move = Number(dayReturn);
+      if (!Number.isFinite(move)) return 0;
+      if (normalized === "up") return move > 0 && move < UP_1D_THRESHOLD ? 0.5 : 0;
+      if (normalized === "down") return move < 0 && move > DOWN_1D_THRESHOLD ? 0.5 : 0;
+      if (normalized === "sideway") return Math.abs(move) > SIDEWAY_1D_THRESHOLD && Math.abs(move) <= PARTIAL_SIDEWAY_1D_THRESHOLD ? 0.5 : 0;
       return 0;
+    }
+
+    function allowsLagCredit(forecast, outcome) {
+      if (!outcome) return false;
+      const normalized = forecastGroup(forecast);
+      const move = Number(outcome.dayReturn);
+      if (!Number.isFinite(move)) return false;
+      if (normalized === "up") return move > DOWN_1D_THRESHOLD;
+      if (normalized === "down") return move < UP_1D_THRESHOLD;
+      if (normalized === "sideway") return Math.abs(move) < UP_1D_THRESHOLD;
+      return false;
     }
 
     function evaluateScenario(scenario) {
@@ -1007,7 +1021,7 @@
         status = partialScoreForForecast(scenario.forecast, return3d, dayReturn) > 0 ? "partial" : "wrong";
       }
       let lagged = false;
-      if (status === "wrong" && isFinal) {
+      if (status === "wrong" && isFinal && allowsLagCredit(scenario.forecast, { actual, dayReturn })) {
         for (const lag of [1, 2, 3]) {
           const lagIndex = index + lag;
           if (lagIndex >= market.length) continue;
@@ -1091,6 +1105,28 @@
       document.getElementById("confidenceScoreboard").innerHTML = `
         <div class="score-grid">
           ${groups.filter(([, rows]) => rows.length).map(([label, rows]) => scoreCard(label, rows)).join("")}
+        </div>
+      `;
+    }
+
+    function renderModelConfidenceScoreboard(prefix, rows) {
+      const evaluated = (rows || []).map((row) => {
+        const status = row.status || row.graded?.status || "pending";
+        return { ...row, status, score: row.score ?? statusScore(status) };
+      }).filter((row) => row.score != null);
+      const groups = [
+        [`${prefix} selected model calls`, evaluated],
+        ["Up calls", evaluated.filter((row) => forecastGroup(row.forecast) === "up")],
+        ["Down calls", evaluated.filter((row) => forecastGroup(row.forecast) === "down")],
+        ["Sideway calls", evaluated.filter((row) => forecastGroup(row.forecast) === "sideway")],
+      ];
+      ["80-100% confidence", "66-79% confidence", "55-65% confidence", "45-54% confidence", "36-44% confidence"].forEach((bucket) => {
+        const bucketRows = evaluated.filter((row) => confidenceBucket(row.confidence) === bucket);
+        if (bucketRows.length) groups.push([bucket, bucketRows]);
+      });
+      document.getElementById("confidenceScoreboard").innerHTML = `
+        <div class="score-grid">
+          ${groups.filter(([, groupRows]) => groupRows.length).map(([label, groupRows]) => scoreCard(label, groupRows)).join("")}
         </div>
       `;
     }
@@ -1228,7 +1264,7 @@
       let score = scoreForecastOutcome(forecast, primary);
       let outcome = primary;
       let lagged = false;
-      if (score === 0) {
+      if (score === 0 && allowsLagCredit(forecast, primary)) {
         for (const lag of [1, 2, 3]) {
           const lagOutcome = actualOutcomeForDate(addDays(date, lag));
           if (!lagOutcome) continue;
@@ -1243,6 +1279,217 @@
       }
       const status = statusFromScore(score);
       return { score, status, outcome, lagged, provisional: false };
+    }
+
+    const INDEX_ACTIVE_LIMIT = 16;
+    const indexRuleDefs = [
+      {
+        id: "idx_analog_pump",
+        name: "Index analog pump confirmation",
+        forecast: "up",
+        applies: ({ scenarios }) => scenarios.some((row) => forecastGroup(row.forecast) === "up" && Number(row.confidence) >= 0.45),
+      },
+      {
+        id: "idx_analog_dump",
+        name: "Index analog dump confirmation",
+        forecast: "down",
+        applies: ({ scenarios }) => scenarios.some((row) => forecastGroup(row.forecast) === "down" && Number(row.confidence) >= 0.45),
+      },
+      {
+        id: "idx_same_phase_rising",
+        name: "Same-phase energy rise",
+        forecast: "up",
+        applies: ({ feature }) => feature?.samePhase && feature.btcChange > 0 && feature.meChange > 0 && feature.btcAccel >= -8,
+      },
+      {
+        id: "idx_same_phase_falling",
+        name: "Same-phase energy fall",
+        forecast: "down",
+        applies: ({ feature }) => feature?.samePhase && feature.btcChange < 0 && feature.meChange < 0 && feature.btcAccel <= 8,
+      },
+      {
+        id: "idx_btc_shock_up",
+        name: "BTC energy upside shock",
+        forecast: "up",
+        applies: ({ feature }) => feature?.shock && feature.btcChange >= 14 && feature.gap >= -10,
+      },
+      {
+        id: "idx_btc_shock_down",
+        name: "BTC energy downside shock",
+        forecast: "down",
+        applies: ({ feature }) => feature?.shock && feature.btcChange <= -14 && feature.gap <= 18,
+      },
+      {
+        id: "idx_cross_bullish",
+        name: "Trader/BTC cross bullish",
+        forecast: "up",
+        applies: ({ feature }) => feature?.crossed && feature.gap > 0 && feature.btcChange > -8,
+      },
+      {
+        id: "idx_cross_bearish",
+        name: "Trader/BTC cross bearish",
+        forecast: "down",
+        applies: ({ feature }) => feature?.crossed && feature.gap < 0 && feature.btcChange < 8,
+      },
+      {
+        id: "idx_trader_overheat_trap",
+        name: "Trader overheat trap",
+        forecast: "down",
+        applies: ({ feature }) => feature?.traderOverheat,
+      },
+      {
+        id: "idx_btc_extreme_low_rebound",
+        name: "BTC energy extreme-low rebound",
+        forecast: "up",
+        applies: ({ feature }) => feature && Number(feature.row.index_BTC) <= 23 && feature.btcChange > 0,
+      },
+      {
+        id: "idx_btc_extreme_high_reversal",
+        name: "BTC energy extreme-high reversal",
+        forecast: "down",
+        applies: ({ feature }) => feature && Number(feature.row.index_BTC) >= 77 && feature.btcChange < 0,
+      },
+      {
+        id: "idx_btc_leads_pump",
+        name: "BTC energy leads pump",
+        forecast: "up",
+        applies: ({ feature }) => feature && feature.gap >= 18 && feature.btcChange >= 8 && feature.meChange <= 10,
+      },
+      {
+        id: "idx_btc_collapse_dump",
+        name: "BTC energy collapse dump",
+        forecast: "down",
+        applies: ({ feature }) => feature && feature.btcChange <= -12 && feature.btcAccel <= -8,
+      },
+      {
+        id: "idx_opposite_phase_down",
+        name: "Opposite-phase downside pressure",
+        forecast: "down",
+        applies: ({ feature, scenarios }) => feature?.oppositePhase && feature.btcChange < 0 && scenarios.some((row) => forecastGroup(row.forecast) !== "down"),
+      },
+      {
+        id: "idx_opposite_phase_compression",
+        name: "Opposite-phase compression",
+        forecast: "sideway",
+        applies: ({ feature }) => feature?.oppositePhase && Math.abs(feature.gap) <= 14 && !feature.shock,
+      },
+      {
+        id: "idx_flat_compression",
+        name: "Flat index compression",
+        forecast: "sideway",
+        applies: ({ feature }) => feature && Math.abs(feature.gap) <= 10 && Math.abs(feature.btcChange) <= 6 && Math.abs(feature.meChange) <= 6 && !feature.shock,
+      },
+    ];
+
+    function indexContextForDate(date, maps) {
+      return {
+        date,
+        index: maps.index.get(date),
+        feature: indexFeature(date),
+        scenarios: maps.scenario.get(date) || [],
+      };
+    }
+
+    function evaluateIndexRule(rule, dates, maps) {
+      const hits = [];
+      dates.forEach((date) => {
+        const context = indexContextForDate(date, maps);
+        if (!rule.applies(context)) return;
+        const graded = scoreForecastAtDate(rule.forecast, date);
+        if (!graded) return;
+        hits.push({ date, ...graded, context });
+      });
+      const enriched = enrichFusionRule({ ...rule, family: "Index" }, hits);
+      enriched.rankScore = rankScore(enriched);
+      return enriched;
+    }
+
+    function buildIndexModel() {
+      if (!state.ohlcv?.length) return null;
+      const maps = { index: indexMap(), scenario: scenarioMap() };
+      const closedDates = state.ohlcv
+        .filter((row) => row.timestamp >= FUSION_BACKTEST_START && row.timestamp <= state.latestMarketDate && maps.index.has(row.timestamp))
+        .map((row) => row.timestamp);
+      const finalDates = closedDates.filter((date) => actualOutcomeForDate(date));
+      const rules = indexRuleDefs
+        .map((rule) => evaluateIndexRule(rule, finalDates, maps))
+        .filter((rule) => rule.cases > 0)
+        .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+      const active = rules.filter((rule) => rule.cases >= 6 && rule.accuracy >= 0.36).slice(0, INDEX_ACTIVE_LIMIT);
+      return {
+        rules,
+        active,
+        finalDates,
+        backtestDates: finalDates,
+        historyStart: finalDates[0] || null,
+        historyEnd: finalDates.at(-1) || null,
+        maps,
+        monthlyModelCache: new Map(),
+        walkForwardCache: new Map(),
+      };
+    }
+
+    function indexModelSetForMonth(prefix, threshold = 0.36) {
+      if (!state.indexModel) return { active: [], standby: [], all: [], trainingDates: [] };
+      const cacheKey = `${prefix}|${Number(threshold).toFixed(3)}`;
+      if (state.indexModel.monthlyModelCache.has(cacheKey)) return state.indexModel.monthlyModelCache.get(cacheKey);
+      const targetStart = `${prefix}-01`;
+      const useAllHistory = targetStart > state.latestMarketDate;
+      const trainingDates = state.indexModel.finalDates.filter((date) => useAllHistory || date < targetStart);
+      const scored = indexRuleDefs
+        .map((rule) => evaluateIndexRule(rule, trainingDates, state.indexModel.maps))
+        .filter((rule) => rule.cases > 0)
+        .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+      const qualifying = scored.filter((rule) => rule.cases >= 6 && rule.accuracy >= threshold);
+      const active = qualifying.slice(0, INDEX_ACTIVE_LIMIT).map((rule, index) => ({ ...rule, monthlyRank: index + 1, monthlyStatus: "active" }));
+      const activeIds = new Set(active.map((rule) => rule.id));
+      const standby = scored
+        .filter((rule) => !activeIds.has(rule.id))
+        .map((rule, index) => ({ ...rule, monthlyRank: index + 1, monthlyStatus: "standby" }));
+      const result = { active, standby, all: qualifying, scored, trainingDates };
+      state.indexModel.monthlyModelCache.set(cacheKey, result);
+      return result;
+    }
+
+    function futureModelCallsForMonth(prefix, options = {}) {
+      if (!state.indexModel) state.indexModel = buildIndexModel();
+      if (!state.indexModel) return [];
+      const direction = options.direction || "All";
+      const threshold = Number(options.threshold ?? 0.36);
+      const modelSet = indexModelSetForMonth(prefix, threshold);
+      const rules = modelSet.active.filter((rule) => rule.cases >= 6 && rule.accuracy >= threshold);
+      return (state.data.indices || [])
+        .filter((row) => row.date.startsWith(prefix))
+        .map((row) => {
+          const date = row.date;
+          const context = indexContextForDate(date, state.indexModel.maps);
+          const applicable = rules
+            .filter((rule) => forecastMatchesDirection(rule.forecast, direction) && rule.applies(context))
+            .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+          if (!applicable.length) return null;
+          const rule = applicable[0];
+          const graded = scoreForecastAtDate(rule.forecast, date);
+          return {
+            date,
+            rule,
+            modelName: rule.name,
+            forecast: rule.forecast,
+            confidence: rule.accuracy,
+            matches: rule.cases,
+            support: applicable.slice(1, 4),
+            context,
+            graded,
+            status: graded?.status || "pending",
+            actual: graded?.outcome?.actual || "pending",
+            score: graded?.score ?? null,
+            dayReturn: graded?.outcome?.dayReturn,
+            return3d: graded?.outcome?.return3d,
+            trap_warning: Boolean(context.feature?.traderOverheat),
+            similar_dates: rule.winningExamples || "-",
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.date.localeCompare(b.date));
     }
 
     const fusionRuleDefs = [
@@ -1573,6 +1820,9 @@
         events,
         closedDates,
         finalDates,
+        backtestDates: finalDates,
+        historyStart: finalDates[0] || null,
+        historyEnd: finalDates.at(-1) || null,
         maps,
         monthlyModelCache: new Map(),
         walkForwardCache: new Map(),
@@ -2191,6 +2441,7 @@
       state.outcomeCache = null;
       state.indexFeatureCache = null;
       state.indexPositionByDate = null;
+      state.indexModel = null;
       state.fusion = null;
     }
 
@@ -2308,10 +2559,7 @@
       const threshold = Number(document.getElementById("futureThreshold").value);
       const prefix = `${year}-${month}`;
       const indexRows = state.data.indices.filter((row) => row.date.startsWith(prefix));
-      const scenarios = state.data.scenario_forecasts
-        .filter((row) => row.date.startsWith(prefix) && Number(row.confidence) >= threshold && Number(row.matches) >= 5)
-        .filter((row) => direction === "All" || row.forecast === direction)
-        .sort((a, b) => a.date.localeCompare(b.date));
+      const scenarios = futureModelCallsForMonth(prefix, { direction, threshold });
       Plotly.newPlot("futureChart", [
         { type: "scatter", mode: "lines+markers", name: "index_BTC", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_BTC), line: { color: "#f7931a", width: 3 } },
         { type: "scatter", mode: "lines+markers", name: "index_me", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_me), line: { color: "#60a5fa", width: 3 } },
@@ -2326,13 +2574,26 @@
       }, { responsive: true, displaylogo: false });
 
       renderFutureCalendar(prefix, scenarios);
-      renderConfidenceScoreboard(prefix);
+      renderModelConfidenceScoreboard(prefix, scenarios);
 
       const colors = { pending: "#fff", correct: "#22c55e", wrong: "#ef4444", partial: "#86efac" };
       const icons = { pending: "?", correct: "OK", wrong: "X", partial: "~" };
       const astroByDate = astroMap();
-      document.getElementById("futureNotes").innerHTML = scenarios.length ? scenarios.map((scenario) => {
-        const graded = evaluateScenario(scenario);
+      const monthSet = indexModelSetForMonth(prefix, threshold);
+      const trainingStart = monthSet.trainingDates[0] || "-";
+      const trainingEnd = monthSet.trainingDates.at(-1) || "-";
+      const methodNote = `
+        <div class="scenario" style="border-left-color:#f7931a">
+          <div class="icon" style="color:#f7931a">M</div>
+          <div>
+            <h4>Index model research <span class="tag">from 2024</span></h4>
+            <p>Future calls use the highest-ranked index rules trained on <b>${monthSet.trainingDates.length}</b> historical closed days (${trainingStart} -> ${trainingEnd}) before the selected month, or all closed history for forward months.</p>
+            <p>Strict scoring: UP = 1D >= +3%, DOWN = 1D <= -3%, SIDEWAY = |1D| <= 1%. Strong opposite moves cannot be graded Partial.</p>
+          </div>
+        </div>
+      `;
+      document.getElementById("futureNotes").innerHTML = methodNote + (scenarios.length ? scenarios.map((scenario) => {
+        const graded = scenario.graded || evaluateScenario(scenario);
         const status = graded.status || scenario.status || "pending";
         const actual = graded.actual || scenario.actual || "pending";
         const astro = astroByDate.get(scenario.date);
@@ -2342,14 +2603,14 @@
             <div class="icon" style="color:${colors[status] || "#fff"}">${icons[status] || "?"}</div>
             <div>
               <h4>${scenario.date} <span class="tag ${scenario.forecast}">${scenario.forecast}</span> <span class="tag ${status}">${cleanStatusLabel(status)}</span></h4>
-              <p>Confidence <b>${pct(scenario.confidence)}</b> from <b>${scenario.matches}</b> analogs. Actual: <b>${actual}</b>${graded.isFinal === false ? ` (${graded.horizon} closed candle window, provisional)` : ""}${scenario.trap_warning ? " . Trap warning active." : ""}</p>
+              <p><b>${scenario.modelName || "Index model"}</b> | confidence <b>${pct(scenario.confidence)}</b> from <b>${scenario.matches}</b> historical cases. Actual: <b>${actual}</b>${graded.isFinal === false ? ` (${graded.horizon} closed candle window, provisional)` : ""}${scenario.trap_warning ? " . Trap warning active." : ""}</p>
               <p>Astro: ${astroText(astro)}${fusion ? ` | Fusion: <b>${fusion.name}</b> ${pct(fusion.accuracy)} from ${fusion.cases} cases` : ""}</p>
               <p>Similar dates: ${scenario.similar_dates || "-"}</p>
             </div>
             <div class="muted">${graded.dayReturn == null ? "" : `1D ${pct(graded.dayReturn)}`}${graded.return3d == null ? "" : `<br>3D ${pct(graded.return3d)}`}</div>
           </div>
         `;
-      }).join("") : `<div class="warn">No forecast reaches the selected confidence and direction filters for ${prefix}.</div>`;
+      }).join("") : `<div class="warn">No index model reaches the selected confidence and direction filters for ${prefix}.</div>`);
 
       const registry = state.data.registry_ledger
         .filter((row) => row.date.startsWith(prefix))
