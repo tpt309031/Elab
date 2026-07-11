@@ -44,6 +44,9 @@ at `/api/market` requests Binance first and falls back to OKX.
 `.github/workflows/daily-research.yml` runs after `03:00 UTC`, refreshes the
 closed daily market data, re-grades past forecasts, refits/ranks candidates,
 rebuilds the pattern registry and future calls, then commits the new artifact.
+The calibrated policy keeps at most 8 SIDEWAY calls and 6 NO CALL decisions per
+calendar month; weaker SIDEWAY utilities are reassigned to the stronger UP/DOWN
+alternative before OOS scoring and future publication.
 The Sunday run enables the gated LSTM and Transformer candidates. Models enter
 the active set only after independent OOS ranking; failed candidates remain in
 standby and old forecasts stay in the historical ledger.

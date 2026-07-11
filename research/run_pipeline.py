@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from research.hybrid_core import (
+    MAX_SIDEWAY_PER_MONTH,
     OOS_START,
     build_feature_frame,
     equity_curve,
@@ -199,6 +200,7 @@ def main() -> None:
                 "purge_days": 5,
                 "calibration_days": 90,
                 "maximum_no_calls_per_month": 6,
+                "maximum_sideway_calls_per_month": MAX_SIDEWAY_PER_MONTH,
                 "transaction_cost_bps": 5,
             },
         },

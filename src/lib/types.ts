@@ -55,6 +55,7 @@ export interface ForecastRow {
   model_weights?: number[];
   policy_mode?: string;
   sideway_penalty?: number;
+  sideway_cap_override?: boolean;
 }
 
 export interface ModelMetric {

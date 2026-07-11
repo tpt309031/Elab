@@ -29,6 +29,7 @@ OOS_START = pd.Timestamp("2024-01-01")
 UP_CORRECT = 0.03
 DOWN_CORRECT = -0.03
 SIDEWAY_LIMIT = 0.01
+MAX_SIDEWAY_PER_MONTH = 8
 UP_PARTIAL_MIN = 0.001
 DOWN_PARTIAL_MAX = -0.001
 TRADING_COST = 0.0005
@@ -472,12 +473,60 @@ def choose_direction(
     return CLASS_NAMES[best], float(utilities[best]), margin
 
 
+def allocate_monthly_directions(
+    dates: Sequence[pd.Timestamp],
+    probabilities: np.ndarray,
+    matrix: np.ndarray,
+    policy_mode: str = "reward",
+    sideway_penalty: float = 1.0,
+    max_sideway_per_month: int = MAX_SIDEWAY_PER_MONTH,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Apply the decision policy while retaining only the strongest monthly sideway calls."""
+    probabilities = np.asarray(probabilities, dtype=float)
+    if probabilities.ndim != 2 or probabilities.shape[1] != len(CLASS_NAMES):
+        raise ValueError("probabilities must have shape (n_rows, 3)")
+    if len(dates) != len(probabilities):
+        raise ValueError("dates and probabilities must have the same length")
+
+    utilities = probabilities.copy() if policy_mode == "probability" else probabilities @ matrix.T
+    utilities[:, CLASS_TO_INDEX["sideway"]] *= sideway_penalty
+    selected = np.argmax(utilities, axis=1).astype(int)
+    overridden = np.zeros(len(selected), dtype=bool)
+    month_keys = pd.to_datetime(pd.Series(list(dates))).dt.strftime("%Y-%m").to_numpy()
+    sideway_index = CLASS_TO_INDEX["sideway"]
+
+    for month_key in pd.unique(month_keys):
+        candidates = np.flatnonzero((month_keys == month_key) & (selected == sideway_index))
+        if len(candidates) <= max_sideway_per_month:
+            continue
+        directional_best = np.maximum(utilities[candidates, 0], utilities[candidates, 2])
+        sideway_advantage = utilities[candidates, sideway_index] - directional_best
+        order = np.argsort(-sideway_advantage, kind="stable")
+        rejected = candidates[order[max_sideway_per_month:]]
+        selected[rejected] = np.where(
+            utilities[rejected, CLASS_TO_INDEX["up"]] > utilities[rejected, CLASS_TO_INDEX["down"]],
+            CLASS_TO_INDEX["up"],
+            CLASS_TO_INDEX["down"],
+        )
+        overridden[rejected] = True
+
+    expected_scores = utilities[np.arange(len(selected)), selected]
+    margins = np.empty(len(selected), dtype=float)
+    for row_index, direction_index in enumerate(selected):
+        alternatives = np.delete(utilities[row_index], direction_index)
+        margins[row_index] = expected_scores[row_index] - float(np.max(alternatives))
+    directions = np.asarray(CLASS_NAMES, dtype=object)[selected]
+    return directions, expected_scores, margins, overridden
+
+
 def select_decision_policy(
     probabilities: np.ndarray,
     daily_returns: Sequence[float],
     matrix: np.ndarray,
+    dates: Sequence[pd.Timestamp] | None = None,
 ) -> tuple[str, float, dict[str, float]]:
     returns = np.asarray(daily_returns, dtype=float)
+    policy_dates = dates if dates is not None else pd.date_range("2000-01-01", periods=len(probabilities), freq="D")
     candidates = [
         (mode, penalty)
         for mode in ("probability", "reward")
@@ -485,10 +534,9 @@ def select_decision_policy(
     ]
     rows: list[tuple[float, str, float, dict[str, float]]] = []
     for mode, penalty in candidates:
-        directions = np.array([
-            choose_direction(probability, matrix, mode, penalty)[0]
-            for probability in probabilities
-        ])
+        directions, _, _, _ = allocate_monthly_directions(
+            policy_dates, probabilities, matrix, mode, penalty,
+        )
         grades = [grade_forecast(direction, move) for direction, move in zip(directions, returns)]
         exact = float(np.mean([status == "correct" for status, _ in grades]))
         weighted = float(np.mean([score for _, score in grades]))
@@ -773,8 +821,13 @@ def _decision_rows(
     volatility_array = np.asarray(volatility if volatility is not None else np.full(len(dates), np.nan), dtype=float)
     finite_volatility = volatility_array[np.isfinite(volatility_array)]
     median_volatility = float(np.nanmedian(finite_volatility)) if finite_volatility.size else 0.03
+    directions, expected_scores, margins, sideway_overrides = allocate_monthly_directions(
+        dates, probabilities, matrix, policy_mode, sideway_penalty,
+    )
     for index, (date, probability, daily_return) in enumerate(zip(dates, probabilities, returns)):
-        direction, expected_score, margin = choose_direction(probability, matrix, policy_mode, sideway_penalty)
+        direction = str(directions[index])
+        expected_score = float(expected_scores[index])
+        margin = float(margins[index])
         entropy = float(-np.sum(np.clip(probability, 1e-9, 1) * np.log(np.clip(probability, 1e-9, 1))) / np.log(3))
         volatility_ratio = volatility_array[index] / median_volatility if median_volatility > 0 else 1.0
         uncertainty_threshold = 0.965 - 0.015 * np.clip(volatility_ratio - 1, -1, 1)
@@ -811,6 +864,7 @@ def _decision_rows(
             "entropy": entropy,
             "policy_mode": policy_mode,
             "sideway_penalty": sideway_penalty,
+            "sideway_cap_override": bool(sideway_overrides[index]),
         })
     return records
 
@@ -924,6 +978,7 @@ def run_walk_forward(
     latest_registry = pd.DataFrame()
     prior_policy_probabilities: list[np.ndarray] = []
     prior_policy_returns: list[np.ndarray] = []
+    prior_policy_dates: list[np.ndarray] = []
     for fold_number, fold in enumerate(folds, start=1):
         train = frame.loc[fold.train_index].copy()
         calibration = frame.loc[fold.calibration_index].copy()
@@ -1028,15 +1083,17 @@ def run_walk_forward(
         if sum(len(values) for values in prior_policy_returns) >= 120:
             past_probabilities = np.concatenate(prior_policy_probabilities, axis=0)[-365:]
             past_returns = np.concatenate(prior_policy_returns, axis=0)[-365:]
+            past_dates = np.concatenate(prior_policy_dates, axis=0)[-365:]
             policy_probabilities = np.concatenate([past_probabilities, ensemble_calibration], axis=0)
             policy_returns = np.concatenate([past_returns, calibration["daily_return"].to_numpy(dtype=float)])
+            policy_dates = np.concatenate([past_dates, calibration["date"].to_numpy()], axis=0)
             policy_mode, sideway_penalty, policy_diagnostics = select_decision_policy(
-                policy_probabilities, policy_returns, matrix,
+                policy_probabilities, policy_returns, matrix, policy_dates,
             )
         else:
             policy_mode, sideway_penalty = "probability", 1.0
             _, _, policy_diagnostics = select_decision_policy(
-                ensemble_calibration, calibration["daily_return"], matrix,
+                ensemble_calibration, calibration["daily_return"], matrix, calibration["date"],
             )
         ensemble_rows = _decision_rows(
             test["date"], ensemble_probabilities, test["daily_return"], matrix,
@@ -1045,6 +1102,7 @@ def run_walk_forward(
         ensemble_records.extend(ensemble_rows)
         prior_policy_probabilities.append(ensemble_probabilities)
         prior_policy_returns.append(test["daily_return"].to_numpy(dtype=float))
+        prior_policy_dates.append(test["date"].to_numpy())
 
         for candidate in candidates:
             model_records.extend(_decision_rows(
@@ -1351,21 +1409,30 @@ def fit_latest_forecasts(
     ensemble = sum(weight * future_probabilities_by_model[candidate.name] for weight, candidate in zip(weights, selected))
     policy_probabilities = ensemble_calibration
     policy_returns = calibration["daily_return"].to_numpy(dtype=float)
+    policy_dates = calibration["date"].to_numpy()
     if policy_history is not None and not policy_history.empty:
         history = policy_history.dropna(subset=["daily_return"]).tail(365)
         if not history.empty:
             historical_probabilities = history[["prob_down", "prob_sideway", "prob_up"]].to_numpy(dtype=float)
             policy_probabilities = np.concatenate([historical_probabilities, policy_probabilities], axis=0)
             policy_returns = np.concatenate([history["daily_return"].to_numpy(dtype=float), policy_returns])
-    policy_mode, sideway_penalty, _ = select_decision_policy(policy_probabilities, policy_returns, matrix)
+            policy_dates = np.concatenate([history["date"].to_numpy(), policy_dates], axis=0)
+    policy_mode, sideway_penalty, _ = select_decision_policy(
+        policy_probabilities, policy_returns, matrix, policy_dates,
+    )
     matching_patterns = _matching_patterns(future, final_registry)
     monthly_abstentions: defaultdict[str, int] = defaultdict(int)
     forecast_rows: list[dict[str, object]] = []
     finite_volatility = development["volatility_7"].dropna()
     median_volatility = float(finite_volatility.median()) if len(finite_volatility) else 0.03
+    directions, expected_scores, margins, sideway_overrides = allocate_monthly_directions(
+        future["date"], ensemble, matrix, policy_mode, sideway_penalty,
+    )
     for row_index, (_, row) in enumerate(future.iterrows()):
         probability = ensemble[row_index]
-        direction, expected_score, margin = choose_direction(probability, matrix, policy_mode, sideway_penalty)
+        direction = str(directions[row_index])
+        expected_score = float(expected_scores[row_index])
+        margin = float(margins[row_index])
         entropy = float(-np.sum(np.clip(probability, 1e-9, 1) * np.log(np.clip(probability, 1e-9, 1))) / np.log(3))
         current_volatility = row.get("volatility_7", math.nan)
         volatility_ratio = float(current_volatility / median_volatility) if np.isfinite(current_volatility) and median_volatility > 0 else 1.0
@@ -1392,6 +1459,7 @@ def fit_latest_forecasts(
             "model_weights": [float(weight) for weight in weights],
             "policy_mode": policy_mode,
             "sideway_penalty": sideway_penalty,
+            "sideway_cap_override": bool(sideway_overrides[row_index]),
         })
     selection_rows = [{
         "model": candidate.name,

@@ -76,6 +76,7 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
                   <Badge variant="outline">{formatDate(selected.date)}</Badge>
                   <Badge className="uppercase">{selected.forecast}</Badge>
                   <Badge variant={selected.status === "wrong" ? "destructive" : "secondary"}>{selected.status}</Badge>
+                  {selected.sideway_cap_override && <Badge variant="outline">SIDEWAY cap override</Badge>}
                   <span className="font-mono text-xs text-muted-foreground">actual {formatSignedPercent(selected.daily_return)}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-center">

@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from research.hybrid_core import (
+    allocate_monthly_directions,
     build_feature_frame,
     grade_forecast,
     monthly_purged_folds,
@@ -48,6 +49,21 @@ def test_market_features_are_shifted_one_closed_candle() -> None:
     expected = close.pct_change().iloc[80]
     observed = frame.loc[frame["date"] == dates[81], "market_return_1"].iloc[0]
     assert np.isclose(observed, expected)
+
+
+def test_monthly_sideway_calls_are_capped_at_eight() -> None:
+    dates = pd.date_range("2026-01-01", periods=40, freq="D")
+    probabilities = np.tile(np.array([0.20, 0.60, 0.20]), (len(dates), 1))
+    directions, _, _, overrides = allocate_monthly_directions(
+        dates, probabilities, np.eye(3), policy_mode="probability",
+    )
+    result = pd.DataFrame({"date": dates, "forecast": directions, "override": overrides})
+    monthly_sideway = result.assign(month=result["date"].dt.strftime("%Y-%m")).groupby("month")["forecast"].apply(
+        lambda values: int((values == "sideway").sum())
+    )
+    assert (monthly_sideway <= 8).all()
+    assert monthly_sideway.loc["2026-01"] == 8
+    assert result["override"].any()
 
 
 def test_monthly_folds_are_purged_and_chronological() -> None:
