@@ -1,0 +1,72 @@
+name: Daily hybrid research
+
+on:
+  schedule:
+    - cron: "20 3 * * *"
+    - cron: "40 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      deep:
+        description: "Run gated LSTM and Transformer research"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-hybrid-research
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      DEEP_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.deep) || github.event.schedule == '40 4 * * 0' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: research/requirements-*.txt
+
+      - name: Install research dependencies
+        shell: bash
+        run: |
+          if [[ "$DEEP_RUN" == "true" ]]; then
+            python -m pip install -r research/requirements-deep.txt
+          else
+            python -m pip install -r research/requirements-core.txt
+          fi
+          python -m pip install pytest
+
+      - name: Verify leakage and scoring invariants
+        run: python -m pytest tests/test_hybrid_core.py -q
+
+      - name: Refresh market and walk-forward artifacts
+        shell: bash
+        run: |
+          if [[ "$DEEP_RUN" == "true" ]]; then
+            python research/run_pipeline.py --deep
+          else
+            python research/run_pipeline.py
+          fi
+
+      - name: Commit evaluated forecasts
+        shell: bash
+        run: |
+          git config user.name "elab-research-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/cache/BTCUSDT_1d.csv data/hybrid_research.json public/data/hybrid_research.json
+          if git diff --cached --quiet; then
+            echo "No closed-candle or research changes"
+            exit 0
+          fi
+          git commit -m "Refresh daily hybrid research"
+          git push

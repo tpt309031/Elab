@@ -1,0 +1,6 @@
+numpy>=2.0,<3
+pandas>=2.2,<4
+scikit-learn>=1.5,<2
+xgboost>=2.1,<4
+lightgbm>=4.5,<5
+shap>=0.46,<1

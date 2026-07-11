@@ -1,0 +1,2908 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BTC Energy Index Lab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23050505'/%3E%3Ccircle cx='32' cy='32' r='22' fill='%23f7931a'/%3E%3Ctext x='32' y='42' font-size='28' text-anchor='middle' font-family='Arial' font-weight='700' fill='white'%3EB%3C/text%3E%3C/svg%3E">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f0f0f;
+      --panel: rgba(17, 17, 17, 0.94);
+      --panel2: rgba(22, 22, 22, 0.84);
+      --line: rgba(255, 255, 255, 0.12);
+      --muted: #9ca3af;
+      --text: #f8fafc;
+      --btc: #f7931a;
+      --green: #22c55e;
+      --red: #ef4444;
+      --yellow: #eab308;
+      --blue: #60a5fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 82% 0%, rgba(247, 147, 26, .14), transparent 32%),
+        radial-gradient(circle at 4% 34%, rgba(96, 165, 250, .06), transparent 28%),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    header {
+      position: relative;
+      border-bottom: 1px solid var(--line);
+      background: rgba(5, 5, 5, .82);
+      backdrop-filter: blur(14px);
+    }
+    .wrap { max-width: 1440px; margin: 0 auto; padding: 22px; }
+    .hero { display: grid; grid-template-columns: 1.2fr .8fr; gap: 18px; align-items: end; }
+    .kicker { color: var(--btc); letter-spacing: .22em; text-transform: uppercase; font-size: 12px; font-weight: 800; }
+    h1 { margin: 8px 0 6px; font-size: clamp(30px, 4vw, 54px); line-height: .95; }
+    .subtitle { color: var(--muted); margin: 0; }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 8px; justify-content: center;
+      border: 1px solid rgba(247, 147, 26, .35);
+      background: rgba(247, 147, 26, .08);
+      color: #fed7aa;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 13px;
+    }
+    main { max-width: 1440px; margin: 0 auto; padding: 22px; }
+    .grid { display: grid; gap: 16px; }
+    .grid.metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .grid.two { grid-template-columns: 1.15fr .85fr; }
+    .card {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(18,18,18,.97), rgba(12,12,12,.94));
+      border-radius: 14px;
+      box-shadow: 0 24px 70px rgba(0,0,0,.28);
+      padding: 16px;
+    }
+    .metric {
+      border-left: 3px solid var(--btc);
+      min-height: 96px;
+    }
+    .metric .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }
+    .metric .value { margin-top: 8px; font-size: 28px; font-weight: 800; }
+    .metric .note { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .menu-toggle {
+      position: fixed;
+      top: 18px;
+      right: 18px;
+      z-index: 40;
+      border: 1px solid rgba(247,147,26,.55);
+      background: rgba(5,5,5,.88);
+      color: #fed7aa;
+      border-radius: 7px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font-weight: 900;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      backdrop-filter: blur(12px);
+    }
+    .menu-scrim {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      background: rgba(0,0,0,.45);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .18s ease;
+    }
+    .menu-scrim.open { opacity: 1; pointer-events: auto; }
+    .tabs {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 41;
+      width: min(320px, calc(100vw - 34px));
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 76px 18px 18px;
+      margin: 0;
+      border-left: 1px solid var(--line);
+      background: rgba(5,5,5,.96);
+      box-shadow: -24px 0 80px rgba(0,0,0,.45);
+      transform: translateX(105%);
+      transition: transform .20s ease;
+      backdrop-filter: blur(18px);
+    }
+    .tabs.open { transform: translateX(0); }
+    .tabs::before {
+      content: "Navigate";
+      position: absolute;
+      top: 24px;
+      left: 18px;
+      color: var(--btc);
+      font-weight: 900;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      font-size: 12px;
+    }
+    .tab {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.04);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 12px 14px;
+      cursor: pointer;
+      font-weight: 700;
+      text-align: left;
+    }
+    .tab.active { border-color: rgba(247,147,26,.75); background: rgba(247,147,26,.15); color: #ffedd5; }
+    .pane { display: none; }
+    .pane.active { display: block; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .10em; }
+    select, input {
+      color: var(--text);
+      background: #0d0d0d;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 12px;
+      outline: none;
+    }
+    select:focus, input:focus { border-color: rgba(247,147,26,.7); }
+    iframe { width: 100%; height: 460px; border: 0; border-radius: 10px; background: #111; }
+    .astro-card { padding: 0; overflow: hidden; }
+    .astro-intro {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(90deg, rgba(247,147,26,.12), rgba(255,255,255,.025));
+    }
+    .astro-intro h3 { margin: 0 0 4px; }
+    .astro-intro p { margin: 0; color: var(--muted); font-size: 13px; }
+    .astro-frame {
+      display: block;
+      width: 100%;
+      height: min(1280px, calc(100vh + 420px));
+      min-height: 1040px;
+      border-radius: 0 0 18px 18px;
+      background: #050505;
+    }
+    .fusion-note {
+      border: 1px solid rgba(247,147,26,.30);
+      background: linear-gradient(90deg, rgba(247,147,26,.10), rgba(255,255,255,.025));
+      color: #fed7aa;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin: 12px 0;
+      line-height: 1.55;
+    }
+    .fusion-row strong { color: #ffedd5; }
+    .fusion-event {
+      display: grid;
+      grid-template-columns: 128px 1fr auto;
+      gap: 12px;
+      align-items: start;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.035);
+      border-radius: 8px;
+      padding: 12px;
+      margin: 10px 0;
+    }
+    .fusion-event .date { color: #fed7aa; font-weight: 900; }
+    .fusion-event p { margin: 3px 0; color: var(--muted); }
+    .fusion-event .score { color: var(--text); font-weight: 900; white-space: nowrap; }
+    .model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .model-card {
+      border: 1px solid var(--line);
+      background: var(--panel2);
+      border-radius: 8px;
+      padding: 12px;
+      cursor: pointer;
+      transition: border-color .16s ease, transform .16s ease, background .16s ease;
+    }
+    .model-card:hover { border-color: rgba(247,147,26,.65); background: rgba(247,147,26,.07); transform: translateY(-1px); }
+    .model-card strong { display: block; margin: 8px 0 5px; }
+    .model-card .mini { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .plot { width: 100%; height: 680px; }
+    .plot.small { height: 500px; }
+    .plot.mini { height: 360px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 10px 8px; text-align: left; vertical-align: top; }
+    th { color: #fed7aa; font-size: 11px; text-transform: uppercase; letter-spacing: .10em; }
+    td { color: #e5e7eb; }
+    .muted { color: var(--muted); }
+    .tag {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .tag.pump, .tag.up, .tag.correct { color: #bbf7d0; border-color: rgba(34,197,94,.45); background: rgba(34,197,94,.10); }
+    .tag.dump, .tag.down, .tag.risk_down, .tag.wrong { color: #fecaca; border-color: rgba(239,68,68,.45); background: rgba(239,68,68,.10); }
+    .tag.sideway, .tag.pending { color: #e5e7eb; border-color: rgba(255,255,255,.25); }
+    .tag.volatility, .tag.trap_up { color: #fef3c7; border-color: rgba(234,179,8,.50); background: rgba(234,179,8,.10); }
+    .tag.partial { color: #dcfce7; border-color: rgba(134,239,172,.50); background: rgba(134,239,172,.08); }
+    .scenario {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 12px;
+      align-items: start;
+      border: 1px solid var(--line);
+      border-left-width: 5px;
+      background: rgba(255,255,255,.035);
+      border-radius: 8px;
+      padding: 12px;
+      margin: 10px 0;
+    }
+    .scenario .icon { font-size: 22px; font-weight: 900; line-height: 1; }
+    .scenario h4 { margin: 0 0 6px; }
+    .scenario p { margin: 3px 0; color: var(--muted); }
+    .score-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 14px 0 18px;
+    }
+    .score-card {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(247,147,26,.08), rgba(255,255,255,.025));
+      border-radius: 8px;
+      padding: 13px;
+    }
+    .score-card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .10em; }
+    .score-card .value { margin-top: 5px; color: #fed7aa; font-size: 26px; font-weight: 900; }
+    .score-card .mini { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .score-card .bar { height: 6px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.08); margin-top: 9px; }
+    .score-card .bar span { display: block; height: 100%; background: linear-gradient(90deg, #ef4444, #f7931a, #22c55e); }
+    .pattern-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+    .pattern-item {
+      border: 1px solid var(--line);
+      background: var(--panel2);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .pattern-item strong { display: block; margin-top: 8px; }
+    .warn {
+      border: 1px solid rgba(234,179,8,.35);
+      background: rgba(234,179,8,.08);
+      color: #fef3c7;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin: 12px 0;
+    }
+    .report-panel {
+      margin-top: 16px;
+      overflow: hidden;
+    }
+    .report-panel > summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      cursor: pointer;
+      color: #fed7aa;
+      font-weight: 900;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      list-style: none;
+    }
+    .report-panel > summary::-webkit-details-marker { display: none; }
+    .report-panel > summary::after {
+      content: "▾";
+      color: var(--btc);
+      transition: transform .16s ease;
+    }
+    .report-panel[open] > summary::after { transform: rotate(180deg); }
+    .report-panel .report-body { margin-top: 14px; }
+    .fusion-topline {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: start;
+      margin-bottom: 14px;
+    }
+    .fusion-topline h3 { margin: 8px 0 5px; }
+    .outcome-strip { display: grid; grid-template-columns: repeat(3, minmax(88px, 1fr)); gap: 8px; min-width: 320px; }
+    .outcome-strip div {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.035);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .outcome-strip strong { display: block; font-size: 18px; }
+    .outcome-strip span { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+    .layer-toggle {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: -4px 0 14px;
+    }
+    .layer-toggle label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.035);
+      border-radius: 7px;
+      padding: 8px 10px;
+      letter-spacing: .06em;
+      cursor: pointer;
+    }
+    .layer-toggle input { width: auto; padding: 0; accent-color: var(--btc); }
+    .viz-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+    .fusion-calendar {
+      margin: 18px 0 4px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: #111111;
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 28px 90px rgba(0,0,0,.34);
+    }
+    .calendar-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 16px;
+    }
+    .calendar-title-main {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+    .calendar-nav {
+      width: 42px;
+      height: 42px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.04);
+      color: #f8fafc;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 24px;
+      line-height: 1;
+      transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease;
+    }
+    .calendar-nav:hover {
+      transform: translateY(-1px);
+      border-color: rgba(247,147,26,.60);
+      background: rgba(247,147,26,.10);
+      box-shadow: 0 14px 34px rgba(247,147,26,.12);
+    }
+    .calendar-heading { min-width: 0; }
+    .calendar-eyebrow {
+      color: var(--btc);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    .calendar-heading strong {
+      display: block;
+      margin-top: 3px;
+      color: #f8fafc;
+      font-size: clamp(26px, 3vw, 42px);
+      line-height: 1;
+      letter-spacing: -.04em;
+    }
+    .calendar-heading span {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .calendar-legend {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      max-width: 520px;
+    }
+    .calendar-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: #d1d5db;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.035);
+      border-radius: 999px;
+      padding: 6px 9px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .legend-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 5px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+    }
+    .legend-swatch.up { background: #10b981; }
+    .legend-swatch.sideway { background: #f59e0b; }
+    .legend-swatch.down { background: #dc2626; }
+    .legend-swatch.split { background: linear-gradient(180deg, rgba(16,185,129,.72) 0 50%, rgba(239,68,68,.82) 50% 100%); }
+    .legend-swatch.no-call { background: #4b5563; }
+    .accuracy-mix {
+      margin: 0 0 16px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.035);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .mix-summary {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      color: #e5e7eb;
+      font-size: 12px;
+    }
+    .mix-summary strong {
+      color: #f8fafc;
+      font-size: 13px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .mix-summary span { color: var(--muted); text-align: right; }
+    .mix-bar {
+      display: flex;
+      width: 100%;
+      height: 14px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+    }
+    .mix-segment { min-width: 0; transition: width .18s ease; }
+    .mix-segment.correct { background: linear-gradient(90deg, #10b981, #34d399); }
+    .mix-segment.partial { background: linear-gradient(90deg, #bef264, #86efac); }
+    .mix-segment.wrong { background: linear-gradient(90deg, #ef4444, #b91c1c); }
+    .mix-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+      color: #d1d5db;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .mix-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .mix-dot { width: 9px; height: 9px; border-radius: 999px; display: inline-block; }
+    .mix-dot.correct { background: #10b981; }
+    .mix-dot.partial { background: #86efac; }
+    .mix-dot.wrong { background: #ef4444; }
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .calendar-head {
+      padding: 5px 4px 7px;
+      text-align: center;
+      color: #9ca3af;
+      background: transparent;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    .calendar-cell {
+      min-height: 136px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 13px;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 15px;
+      background: #1f2937;
+      color: #f8fafc;
+      box-shadow: 0 16px 38px rgba(0,0,0,.30);
+      overflow: hidden;
+      cursor: default;
+      position: relative;
+      transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease, filter .16s ease;
+    }
+    .calendar-cell[onclick] { cursor: pointer; }
+    .calendar-cell:hover {
+      transform: scale(1.025);
+      border-color: rgba(255,255,255,.26);
+      box-shadow: 0 24px 62px rgba(0,0,0,.48);
+      z-index: 2;
+    }
+    .calendar-cell.empty {
+      min-height: 136px;
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+      color: transparent;
+      pointer-events: none;
+    }
+    .calendar-cell.no-call {
+      color: #e5e7eb;
+      background: linear-gradient(180deg, #4b5563, #374151);
+      border-color: rgba(255,255,255,.08);
+    }
+    .calendar-cell.today {
+      border-color: #f7931a;
+      box-shadow: 0 0 0 1px rgba(247,147,26,.75), 0 24px 62px rgba(247,147,26,.16);
+    }
+    .calendar-day {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      font-weight: 900;
+    }
+    .calendar-date-number {
+      color: rgba(255,255,255,.86);
+      font-size: 14px;
+      line-height: 1;
+    }
+    .calendar-day-tag {
+      color: rgba(255,255,255,.62);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+    }
+    .calendar-move {
+      margin: auto 0 0;
+      color: #fff;
+      font-size: clamp(24px, 2.5vw, 34px);
+      font-weight: 950;
+      letter-spacing: -.04em;
+      line-height: .96;
+      text-shadow: 0 2px 18px rgba(0,0,0,.35);
+    }
+    .calendar-move.positive { color: #f0fdf4; }
+    .calendar-move.negative { color: #fff1f2; }
+    .calendar-move.flat { color: #f9fafb; }
+    .calendar-status {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: rgba(255,255,255,.86);
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .calendar-status span {
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .calendar-cell.up {
+      background: linear-gradient(180deg, rgba(16,185,129,.42), rgba(6,95,70,.50));
+      border-color: rgba(16,185,129,.32);
+    }
+    .calendar-cell.up.correct {
+      background: linear-gradient(180deg, #34d399, #10b981 56%, #047857);
+      border-color: rgba(52,211,153,.62);
+    }
+    .calendar-cell.up.wrong {
+      background: linear-gradient(180deg, rgba(16,185,129,.52) 0 50%, rgba(239,68,68,.76) 50% 100%);
+      border-color: rgba(255,255,255,.14);
+    }
+    .calendar-cell.sideway {
+      background: linear-gradient(180deg, rgba(251,191,36,.46), rgba(146,64,14,.46));
+      border-color: rgba(251,191,36,.34);
+    }
+    .calendar-cell.sideway.correct {
+      background: linear-gradient(180deg, #fbbf24, #f59e0b 58%, #b45309);
+      border-color: rgba(245,158,11,.66);
+    }
+    .calendar-cell.sideway.wrong {
+      background: linear-gradient(180deg, rgba(251,191,36,.58) 0 50%, rgba(239,68,68,.76) 50% 100%);
+      border-color: rgba(255,255,255,.14);
+    }
+    .calendar-cell.down {
+      background: linear-gradient(180deg, rgba(239,68,68,.48), rgba(127,29,29,.52));
+      border-color: rgba(239,68,68,.34);
+    }
+    .calendar-cell.down.correct {
+      background: linear-gradient(180deg, #ef4444, #dc2626 56%, #7f1d1d);
+      border-color: rgba(248,113,113,.62);
+    }
+    .calendar-cell.down.wrong {
+      background: linear-gradient(180deg, rgba(239,68,68,.56) 0 50%, #991b1b 50% 100%);
+      border-color: rgba(248,113,113,.48);
+    }
+    .calendar-cell.pending {
+      opacity: .88;
+    }
+    .fusion-detail {
+      border: 1px solid rgba(247,147,26,.28);
+      background: rgba(247,147,26,.055);
+      border-radius: 8px;
+      padding: 13px;
+      min-height: 120px;
+    }
+    .fusion-detail h4 { margin: 0 0 8px; }
+    .chip-button {
+      border: 1px solid rgba(247,147,26,.45);
+      background: rgba(247,147,26,.10);
+      color: #fed7aa;
+      border-radius: 6px;
+      padding: 6px 8px;
+      cursor: pointer;
+      font-weight: 800;
+      margin-top: 8px;
+    }
+    .js-plotly-plot .hoverlayer .hovertext path {
+      fill: rgba(11,11,11,.96) !important;
+      stroke: rgba(247,147,26,.85) !important;
+    }
+    .js-plotly-plot .hoverlayer .hovertext text {
+      fill: #f8fafc !important;
+      text-shadow: none !important;
+    }
+    @media (max-width: 980px) {
+      .hero, .grid.two, .grid.metrics, .pattern-list, .model-grid, .fusion-topline, .viz-grid { grid-template-columns: 1fr; }
+      .outcome-strip { min-width: 0; grid-template-columns: 1fr; }
+      .fusion-event { grid-template-columns: 1fr; }
+      .plot { height: 560px; }
+      .plot.small, .plot.mini { height: 420px; }
+      main, .wrap { padding: 16px; }
+      .calendar-cell { min-height: 112px; padding: 7px; }
+      .calendar-title { align-items: flex-start; flex-direction: column; }
+    }
+    @media (max-width: 680px) {
+      .toolbar label { flex: 1 1 calc(50% - 8px); min-width: 0; }
+      .toolbar select, .toolbar input { width: 100%; box-sizing: border-box; margin-top: 5px; }
+      .fusion-calendar { overflow: visible; padding: 10px; border-radius: 12px; margin-left: -6px; margin-right: -6px; }
+      .calendar-title { gap: 10px; margin-bottom: 12px; }
+      .calendar-title-main { width: 100%; gap: 8px; justify-content: space-between; }
+      .calendar-nav { width: 32px; height: 32px; min-width: 32px; border-radius: 9px; font-size: 20px; }
+      .calendar-heading { text-align: center; flex: 1; }
+      .calendar-heading strong { font-size: 20px; }
+      .calendar-heading span { font-size: 10px; line-height: 1.35; }
+      .calendar-legend { justify-content: flex-start; gap: 5px; max-width: none; }
+      .calendar-legend span { padding: 4px 6px; font-size: 8px; gap: 4px; letter-spacing: .03em; }
+      .legend-swatch { width: 10px; height: 10px; border-radius: 3px; }
+      .accuracy-mix { padding: 9px; margin-bottom: 12px; border-radius: 10px; }
+      .mix-summary { align-items: flex-start; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+      .mix-summary span { text-align: left; font-size: 10px; }
+      .mix-legend { gap: 7px; font-size: 9px; }
+      .calendar-grid { gap: 4px; width: 100%; min-width: 0; }
+      .calendar-head { padding: 3px 0 5px; font-size: 8px; letter-spacing: .06em; }
+      .calendar-cell, .calendar-cell.empty { min-height: 78px; padding: 5px 4px; border-radius: 9px; gap: 4px; box-shadow: 0 8px 22px rgba(0,0,0,.25); }
+      .calendar-cell:hover { transform: none; }
+      .calendar-date-number { font-size: 11px; }
+      .calendar-day { gap: 3px; }
+      .calendar-day-tag { display: none; }
+      .calendar-move { font-size: clamp(12px, 4.2vw, 17px); line-height: 1; letter-spacing: -.03em; }
+      .calendar-status { align-items: flex-start; flex-direction: column; gap: 2px; font-size: 7px; line-height: 1.08; letter-spacing: .02em; }
+      .calendar-status span { white-space: normal; overflow: visible; text-overflow: clip; }
+    }
+    @media (max-width: 420px) {
+      main, .wrap { padding: 12px; }
+      .card { padding: 12px; }
+      .toolbar label { flex-basis: 100%; }
+      .calendar-cell, .calendar-cell.empty { min-height: 70px; padding: 4px 3px; }
+      .calendar-move { font-size: clamp(11px, 4vw, 15px); }
+      .calendar-status { font-size: 6.5px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap hero">
+      <div>
+        <div class="kicker">Quant Research Console</div>
+        <h1>BTC Energy Index Lab</h1>
+        <p class="subtitle">Realtime BTC monitor, private-index pattern research, future scenario grading.</p>
+      </div>
+      <div style="text-align:right">
+        <span class="status-pill" id="liveStatus">Loading market data...</span>
+      </div>
+    </div>
+  </header>
+  <button class="menu-toggle" id="menuToggle" type="button" aria-expanded="false" aria-controls="sectionMenu">Menu</button>
+  <div class="menu-scrim" id="menuScrim"></div>
+
+  <main>
+    <section class="grid metrics" id="metrics"></section>
+
+    <nav class="tabs" id="sectionMenu" aria-label="Section menu">
+      <button class="tab active" data-pane="charts">Charts</button>
+      <button class="tab" data-pane="future">Future</button>
+      <button class="tab" data-pane="patterns">Patterns</button>
+      <button class="tab" data-pane="astro">Astro</button>
+      <button class="tab" data-pane="fusion">Fusion Lab</button>
+      <button class="tab" data-pane="research">Research Tables</button>
+    </nav>
+
+    <section id="charts" class="pane active">
+      <div class="grid">
+        <div class="card">
+          <h3 style="margin-top:0">BTC 5m realtime</h3>
+          <iframe src="https://s.tradingview.com/widgetembed/?symbol=BINANCE%3ABTCUSDT&interval=5&theme=dark&style=1&timezone=Etc%2FUTC&hide_side_toolbar=0&allow_symbol_change=1&save_image=0"></iframe>
+          <p class="muted">TradingView handles intraday realtime. UP, DOWN, and SIDEWAY grading all use the closed UTC daily candle.</p>
+        </div>
+        <div class="card">
+          <div class="toolbar">
+            <label>Year <select id="histYear"></select></label>
+            <label>Month <select id="histMonth"></select></label>
+            <label>Range <select id="histRange"><option>1M</option><option>3M</option><option>6M</option><option>12M</option></select></label>
+          </div>
+          <div id="priceChart" class="plot"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="future" class="pane">
+      <div class="card">
+        <div class="toolbar">
+          <label>Future year <select id="futureYear"></select></label>
+          <label>Future month <select id="futureMonth"></select></label>
+          <label>Direction <select id="futureDirection"><option>All</option><option>up</option><option>down</option><option>sideway</option></select></label>
+          <label>Min model score <input id="futureThreshold" type="number" min="0.20" max="0.95" step="0.01" value="0.25"></label>
+        </div>
+        <div id="futureChart" class="plot small"></div>
+        <div id="futureCalendar" class="fusion-calendar forecast-calendar"></div>
+        <details class="report-panel">
+          <summary>Future scenario reports</summary>
+          <div class="report-body">
+            <div id="confidenceScoreboard"></div>
+            <div id="futureNotes"></div>
+          </div>
+        </details>
+      </div>
+      <details class="card report-panel">
+        <summary>Top ranked pattern calls</summary>
+        <div class="report-body" id="registryCalls"></div>
+      </details>
+    </section>
+
+    <section id="patterns" class="pane">
+      <div class="grid two">
+        <div class="card">
+          <h3>Active prediction patterns</h3>
+          <div class="pattern-list" id="activePatterns"></div>
+        </div>
+        <div class="card">
+          <h3>Unused watchlist</h3>
+          <div class="pattern-list" id="unusedPatterns"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="astro" class="pane">
+      <div class="card astro-card">
+        <div class="astro-intro">
+          <div>
+            <h3>Bitcoin Astro Scores</h3>
+            <p>The Astro module uses the Elab dark theme with year, month, and 1M/3M/6M range views. Astro warnings, markers, and chart style are preserved.</p>
+          </div>
+          <span class="tag">2017-2028</span>
+        </div>
+        <details class="report-panel">
+          <summary>Open Astro chart and report</summary>
+          <div class="report-body">
+            <iframe class="astro-frame" title="Bitcoin Astro Scores" src="/astro.html"></iframe>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section id="fusion" class="pane">
+      <div class="card">
+        <div class="fusion-topline">
+          <div>
+            <span class="tag">Fusion Lab</span>
+            <h3 style="margin-top:8px">Astro + Index Decision Lab</h3>
+            <p class="muted">Fusion forecasts only three main states: <b>up</b>, <b>down</b>, and <b>sideway</b>. Volatility, shock, phase, gap, and astro events are features used to score and rank models.</p>
+          </div>
+          <div class="outcome-strip">
+            <div><strong class="tag up">UP</strong><span>Correct >= +3%; Partial +0.1% to +3%</span></div>
+            <div><strong class="tag down">DOWN</strong><span>Correct <= -3%; Partial -0.1% to -3%</span></div>
+            <div><strong class="tag sideway">SIDEWAY</strong><span>Correct -1% to +1%; no Partial</span></div>
+          </div>
+        </div>
+        <div class="toolbar">
+          <label>Fusion year <select id="fusionYear"></select></label>
+          <label>Fusion month <select id="fusionMonth"></select></label>
+          <label>Range <select id="fusionRange"><option>1M</option><option>3M</option><option>6M</option></select></label>
+          <label>Direction <select id="fusionDirection"><option>All</option><option>up</option><option>down</option><option>sideway</option></select></label>
+          <label>Min model score <input id="fusionThreshold" type="number" min="0.20" max="0.95" step="0.01" value="0.25"></label>
+          <label>Model set <select id="fusionSet"><option value="active">Active monthly</option><option value="all">All qualifying</option><option value="standby">Standby</option></select></label>
+        </div>
+        <div class="layer-toggle">
+          <label><input type="checkbox" id="fusionLayerPrice" checked> BTC price</label>
+          <label><input type="checkbox" id="fusionLayerIndex" checked> Index lines</label>
+          <label><input type="checkbox" id="fusionLayerAstro" checked> Astro score</label>
+          <label><input type="checkbox" id="fusionLayerFusion" checked> Fusion calls</label>
+        </div>
+        <div id="fusionChart" class="plot"></div>
+        <div id="fusionCalendar" class="fusion-calendar"></div>
+        <details class="report-panel">
+          <summary>Fusion forecast reports</summary>
+          <div class="report-body">
+            <div id="fusionMetrics" class="score-grid"></div>
+            <div id="fusionNotes" class="fusion-note"></div>
+            <div id="fusionScoreboard"></div>
+            <div id="fusionCalls"></div>
+          </div>
+        </details>
+      </div>
+      <div class="viz-grid">
+        <div class="card">
+          <h3 style="margin-top:0">Outcome correlation heatmap</h3>
+          <p class="muted">Fusion feature correlation against the current outcome rules in the walk-forward backtest from 2024.</p>
+          <div id="fusionHeatmap" class="plot mini"></div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">Scenario probability distribution</h3>
+          <p class="muted">Signal distribution and accuracy by up/down/sideway for the selected window.</p>
+          <div id="fusionDistribution" class="plot mini"></div>
+        </div>
+      </div>
+      <div class="grid two" style="margin-top:16px">
+        <details class="card report-panel">
+          <summary>Active Fusion models for selected month</summary>
+          <div class="report-body">
+          <div class="model-grid" id="fusionActiveModels"></div>
+          </div>
+        </details>
+        <details class="card report-panel">
+          <summary>Standby / replacement models</summary>
+          <div class="report-body">
+          <div class="model-grid" id="fusionStandbyModels"></div>
+          </div>
+        </details>
+      </div>
+      <details class="card report-panel">
+        <summary>Fusion model evaluation table</summary>
+        <div class="report-body">
+        <div id="fusionRules"></div>
+        </div>
+      </details>
+      <details class="card report-panel">
+        <summary>Pattern detail</summary>
+        <div class="report-body">
+        <div id="fusionDetail" class="fusion-detail">Click a model or forecast call to inspect the pattern, similar dates, and scoring logic.</div>
+        </div>
+      </details>
+      <details class="card report-panel">
+        <summary>Recent evaluated Fusion calls</summary>
+        <div class="report-body">
+        <div id="fusionEvents"></div>
+        </div>
+      </details>
+    </section>
+
+    <section id="research" class="pane">
+      <div class="grid">
+        <div class="card"><h3>Index zones</h3><div id="tableIndexZones"></div></div>
+        <div class="card"><h3>Trader trap and gap patterns</h3><div id="tablePatterns"></div></div>
+        <div class="card"><h3>Weekday analysis</h3><div id="tableWeekday"></div></div>
+        <div class="card"><h3>Move-threshold research</h3><div id="tableMoveResearch"></div></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const state = {
+      data: null,
+      astro: [],
+      astroMeta: null,
+      ohlcv: [],
+      latestMarketDate: null,
+      staticMarketDate: null,
+      indexModel: null,
+      fusion: null,
+      marketRowsCache: null,
+      marketRowsCacheLatest: null,
+      marketIndexCache: null,
+      outcomeCache: null,
+      indexFeatureCache: null,
+      indexPositionByDate: null,
+    };
+    const fmt = new Intl.NumberFormat("en-US");
+    const pct = (value) => value == null || Number.isNaN(Number(value)) ? "-" : `${(Number(value) * 100).toFixed(1)}%`;
+    const money = (value) => value == null ? "-" : `$${fmt.format(Math.round(Number(value)))}`;
+    const dateKey = (value) => new Date(value).toISOString().slice(0, 10);
+    const monthKey = (value) => dateKey(value).slice(0, 7);
+    const parse = (value) => new Date(`${value}T00:00:00Z`);
+    const UP_1D_THRESHOLD = 0.03;
+    const DOWN_1D_THRESHOLD = -0.03;
+    const SIDEWAY_1D_THRESHOLD = 0.01;
+    const PARTIAL_UP_MIN_1D = 0.001;
+    const PARTIAL_DOWN_MAX_1D = -0.001;
+    const DEFAULT_MODEL_SCORE_THRESHOLD = 0.25;
+
+    function expandCompactDashboard(payload) {
+      if (!payload || !payload.compact) return payload;
+      return {
+        meta: payload.m || {},
+        indices: (payload.i || []).map((row) => ({ date: row[0], index_BTC: row[1], index_me: row[2] })),
+        ohlcv: [],
+        daily_signals: [],
+        scenario_forecasts: (payload.s || []).map((row) => ({
+          date: row[0], forecast: row[1], confidence: row[2], matches: row[3],
+          mean_similarity: row[4], trap_warning: row[5], similar_dates: row[6],
+          actual: row[7], status: row[8], actual_return_3d: row[9], actual_range_2d: row[10],
+        })),
+        scenario_ledger: [],
+        registry_ledger: (payload.r || []).map((row) => ({
+          date: row[0], icon: row[1], direction: row[2], rank: row[3],
+          historical_probability: row[4], occurrences: row[5], evaluation: row[6], pattern: row[7],
+        })),
+        active_patterns: (payload.ap || []).map((row) => ({
+          direction: row[0], rank: row[1], pattern: row[2], occurrences: row[3], hit_rate: row[4],
+        })),
+        unused_patterns: (payload.up || []).map((row) => ({
+          direction: row[0], rank: row[1], pattern: row[2], occurrences: row[3], hit_rate: row[4],
+        })),
+        turning_patterns: [],
+        tables: payload.t || {},
+        move_research: payload.mr || [],
+        ledger_accuracy: payload.la || [],
+      };
+    }
+
+    function classifyOutcome(return3d, dayReturn) {
+      if (Number(dayReturn) >= UP_1D_THRESHOLD) return "up";
+      if (Number(dayReturn) <= DOWN_1D_THRESHOLD) return "down";
+      if (Number.isFinite(Number(dayReturn)) && Math.abs(Number(dayReturn)) <= SIDEWAY_1D_THRESHOLD) return "sideway";
+      return "mixed";
+    }
+
+    function partialScoreForForecast(forecast, return3d, dayReturn) {
+      const normalized = forecastGroup(forecast);
+      const move = Number(dayReturn);
+      if (!Number.isFinite(move)) return 0;
+      if (normalized === "up") return move >= PARTIAL_UP_MIN_1D && move < UP_1D_THRESHOLD ? 0.5 : 0;
+      if (normalized === "down") return move <= PARTIAL_DOWN_MAX_1D && move > DOWN_1D_THRESHOLD ? 0.5 : 0;
+      return 0;
+    }
+
+    function evaluateScenario(scenario) {
+      const market = state.ohlcv.filter((row) => row.timestamp <= state.latestMarketDate);
+      const index = market.findIndex((row) => row.timestamp === scenario.date);
+      if (index < 0) return { status: "pending", actual: null };
+      const baseRow = market[index];
+      const base = Number(baseRow.close);
+      const dayReturn = Number(baseRow.close) / Number(baseRow.open) - 1;
+      const future = market.slice(index + 1, index + 4);
+      const horizon = Math.min(3, future.length);
+      let return3d;
+      let range2d;
+      if (horizon >= 2) {
+        return3d = Number(future[horizon - 1].close) / base - 1;
+        range2d = Math.max(...future.slice(0, 2).map((row) => Number(row.high))) / Math.min(...future.slice(0, 2).map((row) => Number(row.low))) - 1;
+      } else if (horizon === 1) {
+        return3d = Number(future[0].close) / base - 1;
+        range2d = Number(future[0].high) / Number(future[0].low) - 1;
+      } else {
+        return3d = null;
+        range2d = null;
+      }
+      const actual = classifyOutcome(return3d, dayReturn);
+      const forecast = forecastGroup(scenario.forecast);
+      const isFinal = true;
+      let status = "wrong";
+      if (!isFinal) {
+        status = "pending";
+      } else if (actual === forecast) {
+        status = "correct";
+      } else {
+        status = partialScoreForForecast(forecast, return3d, dayReturn) > 0 ? "partial" : "wrong";
+      }
+      const lagged = false;
+      return { status, actual, return3d, range2d, dayReturn, horizon, isFinal, lagged };
+    }
+
+    function statusScore(status) {
+      return ({ correct: 1, partial: 0.5, wrong: 0 })[status] ?? null;
+    }
+
+    function confidenceBucket(confidence) {
+      const value = Number(confidence);
+      if (value >= 0.80) return "80-100% confidence";
+      if (value >= 0.66) return "66-79% confidence";
+      if (value >= 0.55) return "55-65% confidence";
+      if (value >= 0.45) return "45-54% confidence";
+      if (value >= 0.36) return "36-44% confidence";
+      if (value >= 0.25) return "25-35% model score";
+      return "20-24% model score";
+    }
+
+    function evaluatedScenarioRows() {
+      return (state.data.scenario_forecasts || []).map((scenario) => {
+        const graded = evaluateScenario(scenario);
+        const status = graded.status || scenario.status || "pending";
+        return { ...scenario, graded, status, score: statusScore(status) };
+      }).filter((row) => row.score != null);
+    }
+
+    function summarizeEvaluations(rows) {
+      const total = rows.length;
+      const score = rows.reduce((sum, row) => sum + row.score, 0);
+      const byStatus = rows.reduce((acc, row) => {
+        acc[row.status] = (acc[row.status] || 0) + 1;
+        return acc;
+      }, {});
+      return {
+        total,
+        accuracy: total ? score / total : 0,
+        correct: byStatus.correct || 0,
+        partial: byStatus.partial || 0,
+        wrong: byStatus.wrong || 0,
+      };
+    }
+
+    function scoreCard(label, rows) {
+      const summary = summarizeEvaluations(rows);
+      return `
+        <div class="score-card">
+          <div class="label">${label}</div>
+          <div class="value">${pct(summary.accuracy)}</div>
+          <div class="mini">${summary.total} evaluated | Correct ${summary.correct} | Partial ${summary.partial} | Wrong ${summary.wrong}</div>
+          <div class="bar"><span style="width:${Math.round(summary.accuracy * 100)}%"></span></div>
+        </div>
+      `;
+    }
+
+    function renderConfidenceScoreboard(prefix) {
+      const evaluated = evaluatedScenarioRows();
+      const selectedMonth = evaluated.filter((row) => row.date.startsWith(prefix));
+      const groups = [
+        ["All closed predictions", evaluated],
+        [`${prefix} closed predictions`, selectedMonth],
+        ["Pump models", evaluated.filter((row) => row.forecast === "up")],
+        ["Dump models", evaluated.filter((row) => row.forecast === "down")],
+      ];
+      ["80-100% confidence", "66-79% confidence", "55-65% confidence", "45-54% confidence", "36-44% confidence"].forEach((bucket) => {
+        const rows = evaluated.filter((row) => confidenceBucket(row.confidence) === bucket);
+        if (rows.length) groups.push([bucket, rows]);
+      });
+      document.getElementById("confidenceScoreboard").innerHTML = `
+        <div class="score-grid">
+          ${groups.filter(([, rows]) => rows.length).map(([label, rows]) => scoreCard(label, rows)).join("")}
+        </div>
+      `;
+    }
+
+    function renderModelConfidenceScoreboard(prefix, rows) {
+      const evaluated = (rows || []).map((row) => {
+        const status = row.status || row.graded?.status || "pending";
+        return { ...row, status, score: row.score ?? statusScore(status) };
+      }).filter((row) => row.score != null);
+      const groups = [
+        [`${prefix} selected model calls`, evaluated],
+        ["Up calls", evaluated.filter((row) => forecastGroup(row.forecast) === "up")],
+        ["Down calls", evaluated.filter((row) => forecastGroup(row.forecast) === "down")],
+        ["Sideway calls", evaluated.filter((row) => forecastGroup(row.forecast) === "sideway")],
+      ];
+      ["80-100% confidence", "66-79% confidence", "55-65% confidence", "45-54% confidence", "36-44% confidence"].forEach((bucket) => {
+        const bucketRows = evaluated.filter((row) => confidenceBucket(row.confidence) === bucket);
+        if (bucketRows.length) groups.push([bucket, bucketRows]);
+      });
+      document.getElementById("confidenceScoreboard").innerHTML = `
+        <div class="score-grid">
+          ${groups.filter(([, groupRows]) => groupRows.length).map(([label, groupRows]) => scoreCard(label, groupRows)).join("")}
+        </div>
+      `;
+    }
+
+    function addDays(date, days) {
+      const next = parse(date);
+      next.setUTCDate(next.getUTCDate() + days);
+      return dateKey(next);
+    }
+
+    function astroMap() {
+      return new Map((state.astro || []).map((row) => [row.date, row]));
+    }
+
+    function indexMap() {
+      return new Map((state.data.indices || []).map((row) => [row.date, row]));
+    }
+
+    function scenarioMap() {
+      const map = new Map();
+      (state.data.scenario_forecasts || []).forEach((row) => {
+        if (!map.has(row.date)) map.set(row.date, []);
+        map.get(row.date).push(row);
+      });
+      map.forEach((rows) => rows.sort((a, b) => Number(b.confidence) - Number(a.confidence)));
+      return map;
+    }
+
+    function indexFeature(date) {
+      if (!state.indexFeatureCache) state.indexFeatureCache = new Map();
+      if (state.indexFeatureCache.has(date)) return state.indexFeatureCache.get(date);
+      const rows = state.data.indices || [];
+      if (!state.indexPositionByDate) {
+        state.indexPositionByDate = new Map(rows.map((row, index) => [row.date, index]));
+      }
+      const idx = state.indexPositionByDate.get(date);
+      if (idx == null || idx < 0) return null;
+      const row = rows[idx];
+      const prev = rows[idx - 1] || row;
+      const prev2 = rows[idx - 2] || prev;
+      const btcChange = Number(row.index_BTC) - Number(prev.index_BTC);
+      const meChange = Number(row.index_me) - Number(prev.index_me);
+      const btcAccel = btcChange - (Number(prev.index_BTC) - Number(prev2.index_BTC));
+      const meAccel = meChange - (Number(prev.index_me) - Number(prev2.index_me));
+      const gap = Number(row.index_BTC) - Number(row.index_me);
+      const prevGap = Number(prev.index_BTC) - Number(prev.index_me);
+      const feature = {
+        row,
+        btcChange,
+        meChange,
+        btcAccel,
+        meAccel,
+        gap,
+        samePhase: Math.sign(btcChange) === Math.sign(meChange) && Math.sign(btcChange) !== 0,
+        oppositePhase: Math.sign(btcChange) === -Math.sign(meChange) && Math.sign(btcChange) !== 0,
+        crossed: Math.sign(gap) !== Math.sign(prevGap) && Math.sign(gap) !== 0 && Math.sign(prevGap) !== 0,
+        shock: Math.abs(btcChange) >= 18 || Math.abs(meChange) >= 18 || Math.abs(btcAccel) >= 18 || Math.abs(meAccel) >= 18,
+        traderOverheat: Number(row.index_me) - Number(row.index_BTC) >= 22,
+      };
+      state.indexFeatureCache.set(date, feature);
+      return feature;
+    }
+
+    function ensureMarketCaches() {
+      if (state.marketRowsCache && state.marketRowsCacheLatest === state.latestMarketDate) return;
+      state.marketRowsCache = (state.ohlcv || []).filter((row) => row.timestamp <= state.latestMarketDate);
+      state.marketIndexCache = new Map(state.marketRowsCache.map((row, index) => [row.timestamp, index]));
+      state.marketRowsCacheLatest = state.latestMarketDate;
+      state.outcomeCache = new Map();
+    }
+
+    function actualOutcomeForDate(date) {
+      ensureMarketCaches();
+      if (state.outcomeCache.has(date)) return state.outcomeCache.get(date);
+      const market = state.marketRowsCache || [];
+      const index = state.marketIndexCache?.get(date);
+      if (index == null || index < 0) {
+        state.outcomeCache.set(date, null);
+        return null;
+      }
+      const baseRow = market[index];
+      const base = Number(baseRow.close);
+      const future = market.slice(index + 1, index + 4);
+      const horizon = Math.min(3, future.length);
+      const return3d = horizon > 0 ? Number(future[horizon - 1].close) / base - 1 : null;
+      const rangeSlice = future.slice(0, Math.min(2, future.length));
+      const range2d = rangeSlice.length ? Math.max(...rangeSlice.map((row) => Number(row.high))) / Math.min(...rangeSlice.map((row) => Number(row.low))) - 1 : null;
+      const dayReturn = Number(baseRow.close) / Number(baseRow.open) - 1;
+      const wickRange = Number(baseRow.high) / Number(baseRow.low) - 1;
+      const outcome = {
+        actual: classifyOutcome(return3d, dayReturn),
+        return3d,
+        range2d,
+        dayReturn,
+        wickRange,
+        horizon,
+        isFinal: true,
+        volatilityHit: (return3d != null && Math.abs(return3d) > 0.036) || (range2d != null && range2d > 0.04) || Math.abs(dayReturn) >= UP_1D_THRESHOLD || wickRange > 0.055,
+      };
+      state.outcomeCache.set(date, outcome);
+      return outcome;
+    }
+
+    function scoreForecastOutcome(forecast, outcome) {
+      if (!outcome) return null;
+      const normalized = forecastGroup(forecast);
+      if (normalized === "up") {
+        if (outcome.actual === "up") return 1;
+        if (partialScoreForForecast(normalized, outcome.return3d, outcome.dayReturn) > 0) return 0.5;
+        return 0;
+      }
+      if (normalized === "down") {
+        if (outcome.actual === "down") return 1;
+        if (partialScoreForForecast(normalized, outcome.return3d, outcome.dayReturn) > 0) return 0.5;
+        return 0;
+      }
+      if (normalized === "sideway") {
+        if (outcome.actual === "sideway") return 1;
+        return 0;
+      }
+      return null;
+    }
+
+    function statusFromScore(score) {
+      if (score == null) return "pending";
+      if (score >= 0.99) return "correct";
+      if (score >= 0.49) return "partial";
+      return "wrong";
+    }
+
+    function scoreForecastAtDate(forecast, date, options = {}) {
+      const primary = actualOutcomeForDate(date);
+      if (!primary) return null;
+      let score = scoreForecastOutcome(forecast, primary);
+      let outcome = primary;
+      const lagged = false;
+      const status = statusFromScore(score);
+      return { score, status, outcome, lagged, provisional: false };
+    }
+
+    const INDEX_ACTIVE_LIMIT = 16;
+    const indexRuleDefs = [
+      {
+        id: "idx_analog_pump",
+        name: "Index analog pump confirmation",
+        forecast: "up",
+        applies: ({ scenarios }) => scenarios.some((row) => forecastGroup(row.forecast) === "up" && Number(row.confidence) >= 0.45),
+      },
+      {
+        id: "idx_analog_dump",
+        name: "Index analog dump confirmation",
+        forecast: "down",
+        applies: ({ scenarios }) => scenarios.some((row) => forecastGroup(row.forecast) === "down" && Number(row.confidence) >= 0.45),
+      },
+      {
+        id: "idx_same_phase_rising",
+        name: "Same-phase energy rise",
+        forecast: "up",
+        applies: ({ feature }) => feature?.samePhase && feature.btcChange > 0 && feature.meChange > 0 && feature.btcAccel >= -8,
+      },
+      {
+        id: "idx_same_phase_falling",
+        name: "Same-phase energy fall",
+        forecast: "down",
+        applies: ({ feature }) => feature?.samePhase && feature.btcChange < 0 && feature.meChange < 0 && feature.btcAccel <= 8,
+      },
+      {
+        id: "idx_btc_shock_up",
+        name: "BTC energy upside shock",
+        forecast: "up",
+        applies: ({ feature }) => feature?.shock && feature.btcChange >= 14 && feature.gap >= -10,
+      },
+      {
+        id: "idx_btc_shock_down",
+        name: "BTC energy downside shock",
+        forecast: "down",
+        applies: ({ feature }) => feature?.shock && feature.btcChange <= -14 && feature.gap <= 18,
+      },
+      {
+        id: "idx_cross_bullish",
+        name: "Trader/BTC cross bullish",
+        forecast: "up",
+        applies: ({ feature }) => feature?.crossed && feature.gap > 0 && feature.btcChange > -8,
+      },
+      {
+        id: "idx_cross_bearish",
+        name: "Trader/BTC cross bearish",
+        forecast: "down",
+        applies: ({ feature }) => feature?.crossed && feature.gap < 0 && feature.btcChange < 8,
+      },
+      {
+        id: "idx_trader_overheat_trap",
+        name: "Trader overheat trap",
+        forecast: "down",
+        applies: ({ feature }) => feature?.traderOverheat,
+      },
+      {
+        id: "idx_btc_extreme_low_rebound",
+        name: "BTC energy extreme-low rebound",
+        forecast: "up",
+        applies: ({ feature }) => feature && Number(feature.row.index_BTC) <= 23 && feature.btcChange > 0,
+      },
+      {
+        id: "idx_btc_extreme_high_reversal",
+        name: "BTC energy extreme-high reversal",
+        forecast: "down",
+        applies: ({ feature }) => feature && Number(feature.row.index_BTC) >= 77 && feature.btcChange < 0,
+      },
+      {
+        id: "idx_btc_leads_pump",
+        name: "BTC energy leads pump",
+        forecast: "up",
+        applies: ({ feature }) => feature && feature.gap >= 18 && feature.btcChange >= 8 && feature.meChange <= 10,
+      },
+      {
+        id: "idx_btc_collapse_dump",
+        name: "BTC energy collapse dump",
+        forecast: "down",
+        applies: ({ feature }) => feature && feature.btcChange <= -12 && feature.btcAccel <= -8,
+      },
+      {
+        id: "idx_opposite_phase_down",
+        name: "Opposite-phase downside pressure",
+        forecast: "down",
+        applies: ({ feature, scenarios }) => feature?.oppositePhase && feature.btcChange < 0 && scenarios.some((row) => forecastGroup(row.forecast) !== "down"),
+      },
+      {
+        id: "idx_opposite_phase_compression",
+        name: "Opposite-phase compression",
+        forecast: "sideway",
+        applies: ({ feature }) => feature?.oppositePhase && Math.abs(feature.gap) <= 14 && !feature.shock,
+      },
+      {
+        id: "idx_flat_compression",
+        name: "Flat index compression",
+        forecast: "sideway",
+        applies: ({ feature }) => feature && Math.abs(feature.gap) <= 10 && Math.abs(feature.btcChange) <= 6 && Math.abs(feature.meChange) <= 6 && !feature.shock,
+      },
+    ];
+
+    function indexContextForDate(date, maps) {
+      return {
+        date,
+        index: maps.index.get(date),
+        feature: indexFeature(date),
+        scenarios: maps.scenario.get(date) || [],
+      };
+    }
+
+    function evaluateIndexRule(rule, dates, maps) {
+      const hits = [];
+      dates.forEach((date) => {
+        const context = indexContextForDate(date, maps);
+        if (!rule.applies(context)) return;
+        const graded = scoreForecastAtDate(rule.forecast, date);
+        if (!graded) return;
+        hits.push({ date, ...graded, context });
+      });
+      const enriched = enrichFusionRule({ ...rule, family: "Index" }, hits);
+      enriched.rankScore = rankScore(enriched);
+      return enriched;
+    }
+
+    function buildIndexModel() {
+      if (!state.ohlcv?.length) return null;
+      const maps = { index: indexMap(), scenario: scenarioMap() };
+      const closedDates = state.ohlcv
+        .filter((row) => row.timestamp >= FUSION_BACKTEST_START && row.timestamp <= state.latestMarketDate && maps.index.has(row.timestamp))
+        .map((row) => row.timestamp);
+      const finalDates = closedDates.filter((date) => actualOutcomeForDate(date));
+      const rules = indexRuleDefs
+        .map((rule) => evaluateIndexRule(rule, finalDates, maps))
+        .filter((rule) => rule.cases > 0)
+        .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+      const active = rules.filter((rule) => rule.cases >= 6 && rule.accuracy >= DEFAULT_MODEL_SCORE_THRESHOLD).slice(0, INDEX_ACTIVE_LIMIT);
+      return {
+        rules,
+        active,
+        finalDates,
+        backtestDates: finalDates,
+        historyStart: finalDates[0] || null,
+        historyEnd: finalDates.at(-1) || null,
+        maps,
+        monthlyModelCache: new Map(),
+        walkForwardCache: new Map(),
+      };
+    }
+
+    function indexModelSetForMonth(prefix, threshold = DEFAULT_MODEL_SCORE_THRESHOLD) {
+      if (!state.indexModel) return { active: [], standby: [], all: [], trainingDates: [] };
+      const cacheKey = `${prefix}|${Number(threshold).toFixed(3)}`;
+      if (state.indexModel.monthlyModelCache.has(cacheKey)) return state.indexModel.monthlyModelCache.get(cacheKey);
+      const targetStart = `${prefix}-01`;
+      const useAllHistory = targetStart > state.latestMarketDate;
+      const trainingDates = state.indexModel.finalDates.filter((date) => useAllHistory || date < targetStart);
+      const scored = indexRuleDefs
+        .map((rule) => evaluateIndexRule(rule, trainingDates, state.indexModel.maps))
+        .filter((rule) => rule.cases > 0)
+        .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+      const qualifying = scored.filter((rule) => rule.cases >= 6 && rule.accuracy >= threshold);
+      const active = qualifying.slice(0, INDEX_ACTIVE_LIMIT).map((rule, index) => ({ ...rule, monthlyRank: index + 1, monthlyStatus: "active" }));
+      const activeIds = new Set(active.map((rule) => rule.id));
+      const standby = scored
+        .filter((rule) => !activeIds.has(rule.id))
+        .map((rule, index) => ({ ...rule, monthlyRank: index + 1, monthlyStatus: "standby" }));
+      const result = { active, standby, all: qualifying, scored, trainingDates };
+      state.indexModel.monthlyModelCache.set(cacheKey, result);
+      return result;
+    }
+
+    function futureModelCallsForMonth(prefix, options = {}) {
+      if (!state.indexModel) state.indexModel = buildIndexModel();
+      if (!state.indexModel) return [];
+      const direction = options.direction || "All";
+      const threshold = Number(options.threshold ?? DEFAULT_MODEL_SCORE_THRESHOLD);
+      const modelSet = indexModelSetForMonth(prefix, threshold);
+      const rules = modelSet.active.filter((rule) => rule.cases >= 6 && rule.accuracy >= threshold);
+      return (state.data.indices || [])
+        .filter((row) => row.date.startsWith(prefix))
+        .map((row) => {
+          const date = row.date;
+          const context = indexContextForDate(date, state.indexModel.maps);
+          const applicable = rules
+            .filter((rule) => forecastMatchesDirection(rule.forecast, direction) && rule.applies(context))
+            .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+          if (!applicable.length) return null;
+          const rule = applicable[0];
+          const graded = scoreForecastAtDate(rule.forecast, date);
+          return {
+            date,
+            rule,
+            modelName: rule.name,
+            forecast: rule.forecast,
+            confidence: rule.accuracy,
+            matches: rule.cases,
+            support: applicable.slice(1, 4),
+            context,
+            graded,
+            status: graded?.status || "pending",
+            actual: graded?.outcome?.actual || "pending",
+            score: graded?.score ?? null,
+            dayReturn: graded?.outcome?.dayReturn,
+            return3d: graded?.outcome?.return3d,
+            trap_warning: Boolean(context.feature?.traderOverheat),
+            similar_dates: rule.winningExamples || "-",
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    const fusionRuleDefs = [
+      {
+        id: "astro_high_risk_dump",
+        name: "Astro high-risk dump guard",
+        family: "Astro",
+        forecast: "down",
+        applies: ({ astro }) => astro && (astro.regime === "high_risk" || Number(astro.volatility) >= 75),
+      },
+      {
+        id: "astro_event_sideway",
+        name: "Astro event compression",
+        family: "Astro",
+        forecast: "sideway",
+        applies: ({ astro }) => astro && (astro.event || Number(astro.volatility) >= 70) && Number(astro.composite) >= 45 && Number(astro.composite) <= 62,
+      },
+      {
+        id: "astro_favorable_pump",
+        name: "Astro favorable pump tailwind",
+        family: "Astro",
+        forecast: "up",
+        applies: ({ astro }) => astro && (astro.regime === "favorable" || (Number(astro.composite) >= 70 && Number(astro.volatility) <= 45)),
+      },
+      {
+        id: "index_pump_model",
+        name: "Index pump model",
+        family: "Index",
+        forecast: "up",
+        applies: ({ scenarios }) => scenarios.some((row) => row.forecast === "up" && Number(row.confidence) >= 0.36),
+      },
+      {
+        id: "index_dump_model",
+        name: "Index dump model",
+        family: "Index",
+        forecast: "down",
+        applies: ({ scenarios }) => scenarios.some((row) => row.forecast === "down" && Number(row.confidence) >= 0.36),
+      },
+      {
+        id: "fusion_confluence_pump",
+        name: "Fusion confluence pump",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, scenarios }) => astro && Number(astro.composite) >= 60 && Number(astro.volatility) < 65 && scenarios.some((row) => row.forecast === "up" && Number(row.confidence) >= 0.45),
+      },
+      {
+        id: "fusion_confluence_dump",
+        name: "Fusion confluence dump",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, scenarios }) => astro && (astro.regime === "high_risk" || astro.event || Number(astro.volatility) >= 60) && scenarios.some((row) => row.forecast === "down" && Number(row.confidence) >= 0.45),
+      },
+      {
+        id: "fusion_long_trap",
+        name: "Long-trap resolves down",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, scenarios, feature }) => astro && scenarios.some((row) => row.forecast === "up" && Number(row.confidence) >= 0.45) && (astro.regime === "high_risk" || astro.event || Number(astro.volatility) >= 70 || feature?.traderOverheat),
+      },
+      {
+        id: "fusion_shock_event_down",
+        name: "Shock event bearish release",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, feature }) => astro && feature?.shock && (feature.btcChange < 0 || Number(astro.composite) < 52) && (astro.event || Number(astro.volatility) >= 58),
+      },
+      {
+        id: "fusion_shock_event_up",
+        name: "Shock event bullish release",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, feature }) => astro && feature?.shock && feature.btcChange > 0 && Number(astro.composite) >= 56 && Number(astro.volatility) >= 45,
+      },
+      {
+        id: "fusion_cross_down",
+        name: "Energy cross bearish",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, feature }) => astro && feature?.crossed && feature.gap < 0 && Number(astro.volatility) >= 48,
+      },
+      {
+        id: "fusion_cross_up",
+        name: "Energy cross bullish",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, feature }) => astro && feature?.crossed && feature.gap > 0 && Number(astro.composite) >= 54,
+      },
+      {
+        id: "fusion_opposite_phase_sideway",
+        name: "Opposite-phase compression",
+        family: "Fusion",
+        forecast: "sideway",
+        applies: ({ astro, feature }) => astro && feature?.oppositePhase && Math.abs(feature.gap) <= 18 && Number(astro.volatility) <= 62,
+      },
+      {
+        id: "fusion_sideway_calm",
+        name: "Fusion calm sideway",
+        family: "Fusion",
+        forecast: "sideway",
+        applies: ({ astro, scenarios, feature }) => astro && Number(astro.volatility) <= 38 && Number(astro.composite) >= 52 && Math.abs(feature?.gap || 0) <= 14 && scenarios.some((row) => row.forecast === "sideway" && Number(row.confidence) >= 0.36),
+      },
+      {
+        id: "fusion_same_phase_favorable_pump",
+        name: "Same-phase favorable pump",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, feature }) => astro && feature?.samePhase && feature.btcChange > 0 && feature.meChange > 0 && Number(astro.composite) >= 64 && Number(astro.volatility) <= 55,
+      },
+      {
+        id: "fusion_btc_energy_leads_pump",
+        name: "BTC energy leads trader pump",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, feature }) => astro && feature && feature.btcChange >= 10 && feature.meChange <= 6 && feature.gap >= 8 && Number(astro.composite) >= 58 && Number(astro.volatility) < 62,
+      },
+      {
+        id: "fusion_green_breakout_confirmed",
+        name: "Green breakout confluence",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, scenarios, feature }) => astro && feature?.samePhase && feature.btcChange > 0 && Number(astro.composite) >= 62 && Number(astro.volatility) <= 50 && scenarios.some((row) => row.forecast === "up" && Number(row.confidence) >= 0.55),
+      },
+      {
+        id: "fusion_trader_overheat_trap",
+        name: "Trader overheat reversal",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, feature }) => astro && feature?.traderOverheat && (astro.event || Number(astro.volatility) >= 52 || Number(astro.composite) < 55),
+      },
+      {
+        id: "fusion_btc_energy_collapse",
+        name: "BTC energy collapse",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, feature }) => astro && feature && feature.btcChange <= -12 && feature.btcAccel <= -8 && Number(astro.volatility) >= 45,
+      },
+      {
+        id: "fusion_red_breakdown_confirmed",
+        name: "Red breakdown confluence",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, scenarios, feature }) => astro && feature && feature.btcChange < 0 && (astro.regime === "high_risk" || Number(astro.volatility) >= 58) && scenarios.some((row) => row.forecast === "down" && Number(row.confidence) >= 0.50),
+      },
+      {
+        id: "fusion_cross_after_event_dump",
+        name: "Cross after event dump",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, feature }) => astro && feature?.crossed && (astro.event || Number(astro.volatility) >= 60) && Number(astro.composite) < 62,
+      },
+      {
+        id: "fusion_dual_shock_down",
+        name: "Dual shock bearish",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, feature }) => astro && feature?.shock && Math.abs(feature.btcChange) >= 14 && Math.abs(feature.meChange) >= 14 && feature.btcChange < 0 && Number(astro.volatility) >= 45,
+      },
+      {
+        id: "fusion_dual_shock_up",
+        name: "Dual shock bullish",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, feature }) => astro && feature?.shock && Math.abs(feature.btcChange) >= 14 && Math.abs(feature.meChange) >= 14 && feature.btcChange > 0 && Number(astro.composite) >= 54,
+      },
+      {
+        id: "fusion_opposite_phase_down",
+        name: "Opposite-phase downside",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, feature, scenarios }) => astro && feature?.oppositePhase && Number(astro.volatility) >= 45 && scenarios.some((row) => row.forecast === "up" && Number(row.confidence) >= 0.45),
+      },
+      {
+        id: "fusion_low_vol_gap_sideway",
+        name: "Low-vol gap compression",
+        family: "Fusion",
+        forecast: "sideway",
+        applies: ({ astro, feature }) => astro && feature && Number(astro.volatility) <= 32 && Math.abs(feature.gap) <= 10 && Math.abs(feature.btcChange) <= 7 && Math.abs(feature.meChange) <= 7,
+      },
+      {
+        id: "fusion_gap_extreme_mean_revert_down",
+        name: "Gap extreme mean-revert down",
+        family: "Fusion",
+        forecast: "down",
+        applies: ({ astro, feature }) => astro && feature && feature.gap <= -24 && Number(astro.composite) < 60 && Number(astro.volatility) >= 38,
+      },
+      {
+        id: "fusion_gap_extreme_catchup_up",
+        name: "Gap extreme catch-up up",
+        family: "Fusion",
+        forecast: "up",
+        applies: ({ astro, feature }) => astro && feature && feature.gap >= 24 && Number(astro.composite) >= 54 && Number(astro.volatility) <= 68,
+      },
+      {
+        id: "fusion_flat_astro_index_box",
+        name: "Flat astro-index box",
+        family: "Fusion",
+        forecast: "sideway",
+        applies: ({ astro, feature, scenarios }) => astro && feature && Math.abs(feature.gap) <= 14 && Math.abs(feature.btcChange) <= 8 && Math.abs(feature.meChange) <= 8 && Number(astro.volatility) <= 42 && scenarios.some((row) => row.forecast === "sideway" && Number(row.confidence) >= 0.36),
+      },
+    ];
+
+    function fusionContextForDate(date, maps) {
+      return {
+        date,
+        astro: maps.astro.get(date),
+        index: maps.index.get(date),
+        feature: indexFeature(date),
+        scenarios: maps.scenario.get(date) || [],
+      };
+    }
+
+    const FUSION_BACKTEST_START = "2024-01-01";
+    const FUSION_ACTIVE_LIMIT = 16;
+
+    function summarizeFusionHits(hits) {
+      const total = hits.length;
+      const score = hits.reduce((sum, row) => sum + row.score, 0);
+      const byStatus = hits.reduce((acc, row) => {
+        acc[row.status] = (acc[row.status] || 0) + 1;
+        return acc;
+      }, {});
+      return {
+        total,
+        accuracy: total ? score / total : 0,
+        correct: byStatus.correct || 0,
+        partial: byStatus.partial || 0,
+        wrong: byStatus.wrong || 0,
+      };
+    }
+
+    function recentCutoff(days) {
+      const latest = state.latestMarketDate || FUSION_BACKTEST_START;
+      return addDays(latest, -days);
+    }
+
+    function forecastGroup(forecast) {
+      if (forecast === "risk_down") return "down";
+      if (forecast === "trap_up") return "down";
+      if (forecast === "volatility") return "sideway";
+      return forecast;
+    }
+
+    function forecastMatchesDirection(forecast, direction) {
+      if (direction === "All") return true;
+      return forecastGroup(forecast) === direction;
+    }
+
+    function rankScore(rule) {
+      const recent = rule.recent90Accuracy ?? rule.accuracy;
+      const sampleWeight = Math.min(1, rule.cases / 24);
+      const volFit = rule.forecast === "sideway" ? (1 - (rule.volatilityHitRate || 0)) : Math.min(rule.volatilityHitRate || 0, 0.80);
+      return (rule.accuracy * 0.58 + recent * 0.30 + sampleWeight * 0.08 + volFit * 0.04);
+    }
+
+    function enrichFusionRule(rule, hits) {
+      const summary = summarizeFusionHits(hits);
+      const recent90Hits = hits.filter((row) => row.date >= recentCutoff(90));
+      const recent90 = summarizeFusionHits(recent90Hits);
+      const returns = hits.reduce((sum, row) => sum + row.outcome.return3d, 0);
+      const volHits = hits.filter((row) => row.outcome.volatilityHit).length;
+      const winning = hits
+        .filter((row) => row.score >= 0.5)
+        .slice(-8)
+        .map((row) => row.date)
+        .join(", ");
+      return {
+        ...rule,
+        cases: summary.total,
+        accuracy: summary.accuracy,
+        correct: summary.correct,
+        partial: summary.partial,
+        wrong: summary.wrong,
+        recent90Cases: recent90.total,
+        recent90Accuracy: recent90.accuracy,
+        averageReturn3d: summary.total ? returns / summary.total : 0,
+        volatilityHitRate: summary.total ? volHits / summary.total : 0,
+        rankScore: 0,
+        examples: hits.slice(-5).map((row) => row.date).join(", "),
+        winningExamples: winning || "-",
+        hits,
+      };
+    }
+
+    function evaluateFusionRule(rule, dates, maps) {
+      const hits = [];
+      dates.forEach((date) => {
+        const context = fusionContextForDate(date, maps);
+        if (!rule.applies(context)) return;
+        const graded = scoreForecastAtDate(rule.forecast, date);
+        if (!graded) return;
+        hits.push({ date, ...graded, context });
+      });
+      const enriched = enrichFusionRule(rule, hits);
+      enriched.rankScore = rankScore(enriched);
+      return enriched;
+    }
+
+    function buildFusionModel() {
+      if (!state.astro?.length || !state.ohlcv?.length) return null;
+      const maps = { astro: astroMap(), index: indexMap(), scenario: scenarioMap() };
+      const closedDates = state.ohlcv
+        .filter((row) => row.timestamp >= FUSION_BACKTEST_START && row.timestamp <= state.latestMarketDate && maps.astro.has(row.timestamp) && maps.index.has(row.timestamp))
+        .map((row) => row.timestamp);
+      const finalDates = closedDates.filter((date) => actualOutcomeForDate(date));
+      const rules = fusionRuleDefs
+        .map((rule) => evaluateFusionRule(rule, finalDates, maps))
+        .filter((rule) => rule.cases > 0)
+        .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+      const fusionRules = rules.filter((rule) => rule.family === "Fusion");
+      const active = fusionRules.filter((rule) => rule.cases >= 6 && rule.accuracy >= DEFAULT_MODEL_SCORE_THRESHOLD).slice(0, FUSION_ACTIVE_LIMIT);
+      const events = closedDates
+        .map((date) => {
+          const context = fusionContextForDate(date, maps);
+          const matches = fusionRules
+            .filter((rule) => rule.applies(context))
+            .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+          if (!matches.length) return null;
+          const graded = scoreForecastAtDate(matches[0].forecast, date, { provisional: true });
+          if (!graded) return null;
+          return { date, context, rule: matches[0], graded };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.date.localeCompare(a.date));
+      return {
+        rules,
+        fusionRules,
+        active,
+        events,
+        closedDates,
+        finalDates,
+        backtestDates: finalDates,
+        historyStart: finalDates[0] || null,
+        historyEnd: finalDates.at(-1) || null,
+        maps,
+        monthlyModelCache: new Map(),
+        walkForwardCache: new Map(),
+      };
+    }
+
+    function fusionScoreCard(label, summary, note) {
+      const accuracy = summary?.accuracy || 0;
+      return `
+        <div class="score-card">
+          <div class="label">${label}</div>
+          <div class="value">${pct(accuracy)}</div>
+          <div class="mini">${note || `${summary?.cases || 0} cases`}</div>
+          <div class="bar"><span style="width:${Math.round(accuracy * 100)}%"></span></div>
+        </div>
+      `;
+    }
+
+    function astroText(row) {
+      if (!row) return "No astro data";
+      return `${row.regime} | composite ${Number(row.composite).toFixed(1)} | vol ${Number(row.volatility).toFixed(1)}${row.event ? " | event" : ""}`;
+    }
+
+    function bestFusionForScenario(scenario) {
+      if (!state.fusion) state.fusion = buildFusionModel();
+      if (!state.fusion) return null;
+      const context = fusionContextForDate(scenario.date, state.fusion.maps);
+      return state.fusion.active
+        .filter((rule) => rule.applies({ ...context, scenarios: [scenario, ...context.scenarios] }))
+        .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases))[0] || null;
+    }
+
+    function fusionModelSetForMonth(prefix, threshold = DEFAULT_MODEL_SCORE_THRESHOLD) {
+      if (!state.fusion) return { active: [], standby: [], all: [], trainingDates: [] };
+      if (!state.fusion.monthlyModelCache) state.fusion.monthlyModelCache = new Map();
+      const cacheKey = `${prefix}|${Number(threshold).toFixed(3)}`;
+      if (state.fusion.monthlyModelCache.has(cacheKey)) return state.fusion.monthlyModelCache.get(cacheKey);
+      const targetStart = `${prefix}-01`;
+      const trainingDates = state.fusion.finalDates.filter((date) => date < targetStart);
+      const scored = fusionRuleDefs
+        .filter((rule) => rule.family === "Fusion")
+        .map((rule) => evaluateFusionRule(rule, trainingDates, state.fusion.maps))
+        .filter((rule) => rule.cases > 0)
+        .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+      const qualifying = scored.filter((rule) => rule.cases >= 6 && rule.accuracy >= threshold);
+      const active = qualifying.slice(0, FUSION_ACTIVE_LIMIT).map((rule, index) => ({ ...rule, monthlyRank: index + 1, monthlyStatus: "active" }));
+      const activeIds = new Set(active.map((rule) => rule.id));
+      const standby = scored
+        .filter((rule) => !activeIds.has(rule.id))
+        .map((rule, index) => ({ ...rule, monthlyRank: index + 1, monthlyStatus: "standby" }));
+      const result = { active, standby, all: qualifying, scored, trainingDates };
+      state.fusion.monthlyModelCache.set(cacheKey, result);
+      return result;
+    }
+
+    function selectedFusionPrefix() {
+      const year = document.getElementById("fusionYear")?.value;
+      const month = String(document.getElementById("fusionMonth")?.value || "1").padStart(2, "0");
+      return `${year}-${month}`;
+    }
+
+    function selectedFusionWindow() {
+      const prefix = selectedFusionPrefix();
+      const range = document.getElementById("fusionRange")?.value || "1M";
+      const months = { "1M": 1, "3M": 3, "6M": 6 }[range] || 1;
+      const anchor = parse(`${prefix}-01`);
+      const start = new Date(anchor);
+      if (months > 1) start.setUTCMonth(start.getUTCMonth() - months + 1);
+      const end = new Date(anchor);
+      end.setUTCMonth(end.getUTCMonth() + 1);
+      const prefixes = [];
+      const cursor = new Date(start);
+      while (cursor < end) {
+        prefixes.push(dateKey(cursor).slice(0, 7));
+        cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+      }
+      return {
+        prefix,
+        range,
+        months,
+        startKey: dateKey(start),
+        endKey: dateKey(end),
+        label: `${dateKey(start).slice(0, 7)} → ${prefix}`,
+        prefixes,
+      };
+    }
+
+    function isDateInWindow(date, window) {
+      return date >= window.startKey && date < window.endKey;
+    }
+
+    function fusionDatesForMonth(prefix) {
+      return (state.data.indices || [])
+        .filter((row) => row.date >= FUSION_BACKTEST_START && row.date.startsWith(prefix))
+        .map((row) => row.date)
+        .filter((date) => state.fusion?.maps.astro.has(date));
+    }
+
+    function fusionCallsForWindow(window, options = {}) {
+      return window.prefixes
+        .flatMap((prefix) => fusionCallsForMonth(prefix, options))
+        .filter((call) => isDateInWindow(call.date, window))
+        .sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    function fusionCallsForMonth(prefix, options = {}) {
+      if (!state.fusion) return [];
+      const direction = options.direction || "All";
+      const threshold = Number(options.threshold ?? DEFAULT_MODEL_SCORE_THRESHOLD);
+      const modelSetName = options.modelSet || "active";
+      const modelSet = fusionModelSetForMonth(prefix, threshold);
+      const rules = (modelSetName === "standby" ? modelSet.standby : modelSetName === "all" ? modelSet.all : modelSet.active)
+        .filter((rule) => rule.cases >= 6 && rule.accuracy >= threshold);
+      return fusionDatesForMonth(prefix)
+        .map((date) => {
+          const context = fusionContextForDate(date, state.fusion.maps);
+          const applicable = rules
+            .filter((rule) => forecastMatchesDirection(rule.forecast, direction) && rule.applies(context))
+            .sort((a, b) => (b.rankScore - a.rankScore) || (b.accuracy - a.accuracy) || (b.cases - a.cases));
+          if (!applicable.length) return null;
+          const rule = applicable[0];
+          const graded = scoreForecastAtDate(rule.forecast, date, { provisional: true });
+          return {
+            date,
+            rule,
+            forecast: rule.forecast,
+            confidence: rule.accuracy,
+            support: applicable.slice(1, 4),
+            context,
+            graded,
+            status: graded?.status || "pending",
+            actual: graded?.outcome?.actual || "pending",
+            score: graded?.score ?? null,
+            dayReturn: graded?.outcome?.dayReturn,
+            return3d: graded?.outcome?.return3d,
+            provisional: Boolean(graded?.provisional),
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    function dailyMoveForDate(date) {
+      const row = (state.ohlcv || []).find((item) => item.timestamp === date);
+      if (!row || !Number(row.open)) return null;
+      return {
+        row,
+        move: Number(row.close) / Number(row.open) - 1,
+      };
+    }
+
+    function signedPct(value) {
+      if (value == null || Number.isNaN(Number(value))) return "-";
+      const number = Number(value);
+      return `${number > 0 ? "+" : ""}${(number * 100).toFixed(1)}%`;
+    }
+
+    function cleanStatusLabel(status) {
+      const labels = {
+        correct: "Correct",
+        wrong: "Wrong",
+        partial: "Partial",
+        pending: "Pending",
+        "no-call": "-",
+      };
+      return labels[status] || status || "-";
+    }
+
+    function cleanPredictionLabel(prediction) {
+      if (prediction === "no-call") return "NO CALL";
+      return String(prediction || "-").toUpperCase();
+    }
+
+    function evaluationMix(items) {
+      const rows = (items || []).map((item) => item.status || item.graded?.status || "pending");
+      const correct = rows.filter((status) => status === "correct").length;
+      const partial = rows.filter((status) => status === "partial").length;
+      const wrong = rows.filter((status) => status === "wrong").length;
+      const pending = rows.filter((status) => status === "pending").length;
+      const evaluated = correct + partial + wrong;
+      return {
+        correct,
+        partial,
+        wrong,
+        pending,
+        evaluated,
+        correctShare: evaluated ? correct / evaluated : 0,
+        partialShare: evaluated ? partial / evaluated : 0,
+        wrongShare: evaluated ? wrong / evaluated : 0,
+      };
+    }
+
+    function renderAccuracyMixBar(items, label) {
+      const mix = evaluationMix(items);
+      if (!mix.evaluated) {
+        return `
+          <div class="accuracy-mix">
+            <div class="mix-summary"><strong>${label}</strong><span>No closed predictions yet | pending ${mix.pending}</span></div>
+            <div class="mix-bar"><span class="mix-segment correct" style="width:0%"></span><span class="mix-segment partial" style="width:0%"></span><span class="mix-segment wrong" style="width:0%"></span></div>
+          </div>
+        `;
+      }
+      return `
+        <div class="accuracy-mix">
+          <div class="mix-summary">
+            <strong>${label}</strong>
+            <span>${mix.evaluated} evaluated | Correct ${pct(mix.correctShare)} | Partial ${pct(mix.partialShare)} | Wrong ${pct(mix.wrongShare)} | Pending ${mix.pending}</span>
+          </div>
+          <div class="mix-bar" aria-label="${label} accuracy split">
+            <span class="mix-segment correct" style="width:${Math.max(0, mix.correctShare * 100)}%"></span>
+            <span class="mix-segment partial" style="width:${Math.max(0, mix.partialShare * 100)}%"></span>
+            <span class="mix-segment wrong" style="width:${Math.max(0, mix.wrongShare * 100)}%"></span>
+          </div>
+          <div class="mix-legend">
+            <span><i class="mix-dot correct"></i>Correct</span>
+            <span><i class="mix-dot partial"></i>Partial</span>
+            <span><i class="mix-dot wrong"></i>Wrong</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function shiftFutureMonth(delta) {
+      const yearSelect = document.getElementById("futureYear");
+      const monthSelect = document.getElementById("futureMonth");
+      if (!yearSelect || !monthSelect) return;
+      const current = parse(`${String(yearSelect.value)}-${String(monthSelect.value).padStart(2, "0")}-01`);
+      current.setUTCMonth(current.getUTCMonth() + delta);
+      const nextYear = String(current.getUTCFullYear());
+      const nextMonth = String(current.getUTCMonth() + 1);
+      const yearOptions = Array.from(yearSelect.options || []).map((option) => String(option.value));
+      if (yearOptions.length && !yearOptions.includes(nextYear)) return;
+      yearSelect.value = nextYear;
+      updateFutureMonths();
+      const monthOptions = Array.from(monthSelect.options || []).map((option) => String(option.value));
+      if (monthOptions.length && !monthOptions.includes(nextMonth)) return;
+      monthSelect.value = nextMonth;
+      renderFuture();
+    }
+
+    function shiftFusionMonth(delta) {
+      const yearSelect = document.getElementById("fusionYear");
+      const monthSelect = document.getElementById("fusionMonth");
+      if (!yearSelect || !monthSelect) return;
+      const current = parse(`${selectedFusionPrefix()}-01`);
+      current.setUTCMonth(current.getUTCMonth() + delta);
+      const nextYear = String(current.getUTCFullYear());
+      const nextMonth = String(current.getUTCMonth() + 1);
+      const yearOptions = Array.from(yearSelect.options || []).map((option) => String(option.value));
+      if (yearOptions.length && !yearOptions.includes(nextYear)) return;
+      yearSelect.value = nextYear;
+      updateFusionMonths();
+      const monthOptions = Array.from(monthSelect.options || []).map((option) => String(option.value));
+      if (monthOptions.length && !monthOptions.includes(nextMonth)) return;
+      monthSelect.value = nextMonth;
+      renderFusion();
+    }
+
+    function renderFutureCalendar(prefix, scenarios) {
+      const target = document.getElementById("futureCalendar");
+      if (!target) return;
+      const start = parse(`${prefix}-01`);
+      if (!start || Number.isNaN(start.getTime())) {
+        target.innerHTML = "";
+        return;
+      }
+      const end = new Date(start);
+      end.setUTCMonth(end.getUTCMonth() + 1);
+      const dayCount = Math.round((end - start) / 86400000);
+      const leadingBlanks = start.getUTCDay();
+      const callByDate = new Map();
+      (scenarios || []).forEach((scenario) => {
+        const graded = scenario.graded || evaluateScenario(scenario);
+        const status = graded.status || scenario.status || "pending";
+        const call = {
+          ...scenario,
+          forecast: forecastGroup(scenario.forecast),
+          confidence: Number(scenario.confidence),
+          graded,
+          status,
+          actual: graded.actual || scenario.actual || "pending",
+          dayReturn: graded.dayReturn,
+          return3d: graded.return3d,
+        };
+        const existing = callByDate.get(call.date);
+        if (!existing || Number(call.confidence) > Number(existing.confidence)) callByDate.set(call.date, call);
+      });
+      const calls = [...callByDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+      const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const monthLabel = start.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+      const today = dateKey(new Date());
+      const cells = [];
+      for (let index = 0; index < leadingBlanks; index += 1) {
+        cells.push(`<div class="calendar-cell empty" aria-hidden="true"></div>`);
+      }
+      for (let day = 1; day <= dayCount; day += 1) {
+        const date = `${prefix}-${String(day).padStart(2, "0")}`;
+        const call = callByDate.get(date);
+        const daily = dailyMoveForDate(date);
+        const prediction = call ? forecastGroup(call.forecast) : "no-call";
+        const status = call ? (call.status || "pending") : "no-call";
+        const statusClass = call ? `${prediction} ${status}` : "no-call";
+        const actual = call ? (call.actual || "pending") : "-";
+        const confidence = call ? pct(call.confidence) : "-";
+        const move = daily ? signedPct(daily.move) : "-";
+        const moveClass = !daily ? "flat" : daily.move > 0.001 ? "positive" : daily.move < -0.001 ? "negative" : "flat";
+        const dayName = weekdays[parse(date).getUTCDay()];
+        const todayClass = date === today ? " today" : "";
+        const provisional = call?.graded?.isFinal === false ? " / provisional" : "";
+        const aria = `${date}. ${cleanPredictionLabel(prediction)}. ${cleanStatusLabel(status)}${provisional}. Move ${move}. Actual ${actual}. Confidence ${confidence}.`;
+        cells.push(`
+          <div class="calendar-cell ${statusClass}${todayClass}" aria-label="${aria}">
+            <div class="calendar-day"><span class="calendar-date-number">${day}</span><span class="calendar-day-tag">${dayName}</span></div>
+            <div class="calendar-move ${moveClass}">${move}</div>
+            <div class="calendar-status"><span>${cleanPredictionLabel(prediction)}</span><span>${cleanStatusLabel(status)}${provisional}</span></div>
+          </div>
+        `);
+      }
+      const evaluated = calls.filter((call) => call.score != null || ["correct", "partial", "wrong"].includes(call.status)).length;
+      const pending = calls.filter((call) => call.status === "pending").length;
+      target.innerHTML = `
+        <div class="calendar-title">
+          <div class="calendar-title-main">
+            <button class="calendar-nav" type="button" onclick="shiftFutureMonth(-1)" aria-label="Previous Future month">&#8249;</button>
+            <div class="calendar-heading">
+              <div class="calendar-eyebrow">Future Forecast Calendar</div>
+              <strong>${monthLabel}</strong>
+              <span>${calls.length} calls | ${evaluated} evaluated | ${pending} pending | Move = daily open-to-close return</span>
+            </div>
+            <button class="calendar-nav" type="button" onclick="shiftFutureMonth(1)" aria-label="Next Future month">&#8250;</button>
+          </div>
+          <div class="calendar-legend" aria-label="Calendar color legend">
+            <span><i class="legend-swatch up"></i>UP</span>
+            <span><i class="legend-swatch sideway"></i>SIDEWAY</span>
+            <span><i class="legend-swatch down"></i>DOWN</span>
+            <span><i class="legend-swatch split"></i>Wrong split</span>
+            <span><i class="legend-swatch no-call"></i>No call</span>
+          </div>
+        </div>
+        ${renderAccuracyMixBar(calls, `${monthLabel} Future accuracy split`)}
+        <div class="calendar-grid">
+          ${weekdays.map((day) => `<div class="calendar-head">${day}</div>`).join("")}
+          ${cells.join("")}
+        </div>
+      `;
+    }
+
+    function renderFusionCalendar(prefix, calls) {
+      const target = document.getElementById("fusionCalendar");
+      if (!target) return;
+      const start = parse(`${prefix}-01`);
+      if (!start || Number.isNaN(start.getTime())) {
+        target.innerHTML = "";
+        return;
+      }
+      const end = new Date(start);
+      end.setUTCMonth(end.getUTCMonth() + 1);
+      const dayCount = Math.round((end - start) / 86400000);
+      const leadingBlanks = start.getUTCDay();
+      const callByDate = new Map((calls || []).map((call) => [call.date, call]));
+      const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const monthLabel = start.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+      const today = dateKey(new Date());
+      const cells = [];
+      for (let index = 0; index < leadingBlanks; index += 1) {
+        cells.push(`<div class="calendar-cell empty" aria-hidden="true"></div>`);
+      }
+      for (let day = 1; day <= dayCount; day += 1) {
+        const date = `${prefix}-${String(day).padStart(2, "0")}`;
+        const call = callByDate.get(date);
+        const daily = dailyMoveForDate(date);
+        const prediction = call ? forecastGroup(call.forecast) : "no-call";
+        const status = call ? (call.status || "pending") : "no-call";
+        const statusClass = call ? `${prediction} ${status}` : "no-call";
+        const actual = call ? (call.actual || "pending") : "-";
+        const confidence = call ? pct(call.confidence) : "-";
+        const move = daily ? signedPct(daily.move) : "-";
+        const moveClass = !daily ? "flat" : daily.move > 0.001 ? "positive" : daily.move < -0.001 ? "negative" : "flat";
+        const ruleName = call?.rule?.name || "No Fusion call";
+        const provisional = call?.provisional ? " / provisional" : "";
+        const dayName = weekdays[parse(date).getUTCDay()];
+        const todayClass = date === today ? " today" : "";
+        const aria = `${date}. ${cleanPredictionLabel(prediction)}. ${cleanStatusLabel(status)}${provisional}. Move ${move}. Actual ${actual}. ${ruleName}. Confidence ${confidence}.`;
+        cells.push(`
+          <div class="calendar-cell ${statusClass}${todayClass}" ${call ? `onclick="showFusionRuleDetail('${call.rule.id}')"` : ""} aria-label="${aria}">
+            <div class="calendar-day"><span class="calendar-date-number">${day}</span><span class="calendar-day-tag">${dayName}</span></div>
+            <div class="calendar-move ${moveClass}">${move}</div>
+            <div class="calendar-status"><span>${cleanPredictionLabel(prediction)}</span><span>${cleanStatusLabel(status)}</span></div>
+          </div>
+        `);
+      }
+      const evaluated = calls.filter((call) => call.score != null).length;
+      const pending = calls.filter((call) => call.status === "pending").length;
+      target.innerHTML = `
+        <div class="calendar-title">
+          <div class="calendar-title-main">
+            <button class="calendar-nav" type="button" onclick="shiftFusionMonth(-1)" aria-label="Previous Fusion month">&#8249;</button>
+            <div class="calendar-heading">
+              <div class="calendar-eyebrow">Fusion Forecast Calendar</div>
+              <strong>${monthLabel}</strong>
+              <span>${calls.length} calls | ${evaluated} evaluated | ${pending} pending | Move = daily open-to-close return</span>
+            </div>
+            <button class="calendar-nav" type="button" onclick="shiftFusionMonth(1)" aria-label="Next Fusion month">&#8250;</button>
+          </div>
+          <div class="calendar-legend" aria-label="Calendar color legend">
+            <span><i class="legend-swatch up"></i>UP</span>
+            <span><i class="legend-swatch sideway"></i>SIDEWAY</span>
+            <span><i class="legend-swatch down"></i>DOWN</span>
+            <span><i class="legend-swatch split"></i>Wrong split</span>
+            <span><i class="legend-swatch no-call"></i>No call</span>
+          </div>
+        </div>
+        ${renderAccuracyMixBar(calls, `${monthLabel} Fusion accuracy split`)}
+        <div class="calendar-grid">
+          ${weekdays.map((day) => `<div class="calendar-head">${day}</div>`).join("")}
+          ${cells.join("")}
+        </div>
+      `;
+    }
+
+    function fusionWalkForwardCalls(threshold = DEFAULT_MODEL_SCORE_THRESHOLD) {
+      if (!state.fusion) return [];
+      if (!state.fusion.walkForwardCache) state.fusion.walkForwardCache = new Map();
+      const cacheKey = Number(threshold).toFixed(3);
+      if (state.fusion.walkForwardCache.has(cacheKey)) return state.fusion.walkForwardCache.get(cacheKey);
+      const months = [...new Set((state.data.indices || [])
+        .filter((row) => row.date >= FUSION_BACKTEST_START && row.date <= state.latestMarketDate)
+        .map((row) => row.date.slice(0, 7)))]
+        .sort();
+      const calls = months.flatMap((prefix) => fusionCallsForMonth(prefix, {
+        direction: "All",
+        threshold,
+        modelSet: "active",
+      }));
+      state.fusion.walkForwardCache.set(cacheKey, calls);
+      return calls;
+    }
+
+    function summarizeFusionCalls(calls) {
+      const evaluated = calls.filter((call) => call.score != null);
+      const score = evaluated.reduce((sum, call) => sum + call.score, 0);
+      const byStatus = evaluated.reduce((acc, call) => {
+        acc[call.status] = (acc[call.status] || 0) + 1;
+        return acc;
+      }, {});
+      return {
+        total: evaluated.length,
+        accuracy: evaluated.length ? score / evaluated.length : 0,
+        correct: byStatus.correct || 0,
+        partial: byStatus.partial || 0,
+        wrong: byStatus.wrong || 0,
+        pending: calls.filter((call) => call.status === "pending").length,
+      };
+    }
+
+    function pearson(xs, ys) {
+      const pairs = xs.map((x, index) => [Number(x), Number(ys[index])]).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+      if (pairs.length < 8) return 0;
+      const meanX = pairs.reduce((sum, [x]) => sum + x, 0) / pairs.length;
+      const meanY = pairs.reduce((sum, [, y]) => sum + y, 0) / pairs.length;
+      let numerator = 0;
+      let denomX = 0;
+      let denomY = 0;
+      pairs.forEach(([x, y]) => {
+        const dx = x - meanX;
+        const dy = y - meanY;
+        numerator += dx * dy;
+        denomX += dx * dx;
+        denomY += dy * dy;
+      });
+      return denomX && denomY ? numerator / Math.sqrt(denomX * denomY) : 0;
+    }
+
+    function fusionFeatureRows(model) {
+      if (!model) return [];
+      return model.finalDates
+        .map((date) => {
+          const outcome = actualOutcomeForDate(date);
+          if (!outcome || !["up", "down", "sideway"].includes(outcome.actual)) return null;
+          const context = fusionContextForDate(date, model.maps);
+          const feature = context.feature;
+          const astro = context.astro;
+          if (!feature || !astro) return null;
+          return {
+            date,
+            outcome: outcome.actual,
+            indexBTC: Number(feature.row.index_BTC),
+            indexMe: Number(feature.row.index_me),
+            gap: feature.gap,
+            btcSlope: feature.btcChange,
+            meSlope: feature.meChange,
+            btcAccel: feature.btcAccel,
+            astroComposite: Number(astro.composite),
+            astroVolatility: Number(astro.volatility),
+            samePhase: feature.samePhase ? 1 : 0,
+            oppositePhase: feature.oppositePhase ? 1 : 0,
+            shock: feature.shock ? 1 : 0,
+            crossed: feature.crossed ? 1 : 0,
+          };
+        })
+        .filter(Boolean);
+    }
+
+    function renderFusionHeatmap(model) {
+      const rows = fusionFeatureRows(model);
+      const featureDefs = [
+        ["indexBTC", "index BTC"],
+        ["indexMe", "index me"],
+        ["gap", "gap"],
+        ["btcSlope", "BTC slope"],
+        ["meSlope", "ME slope"],
+        ["btcAccel", "BTC accel"],
+        ["astroComposite", "astro comp"],
+        ["astroVolatility", "astro vol"],
+        ["samePhase", "same phase"],
+        ["oppositePhase", "opp phase"],
+        ["shock", "shock"],
+        ["crossed", "cross"],
+      ];
+      const outcomes = ["up", "down", "sideway"];
+      const z = outcomes.map((outcome) => {
+        const target = rows.map((row) => row.outcome === outcome ? 1 : 0);
+        return featureDefs.map(([key]) => Number(pearson(rows.map((row) => row[key]), target).toFixed(3)));
+      });
+      Plotly.newPlot("fusionHeatmap", [{
+        type: "heatmap",
+        x: featureDefs.map(([, label]) => label),
+        y: outcomes,
+        z,
+        zmin: -0.45,
+        zmax: 0.45,
+        colorscale: [
+          [0, "#ef4444"],
+          [0.5, "#111111"],
+          [1, "#22c55e"],
+        ],
+        hovertemplate: "%{y} vs %{x}<br>corr %{z:.3f}<extra></extra>",
+      }], {
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: "#f8fafc" },
+        xaxis: { gridcolor: "rgba(255,255,255,.06)" },
+        yaxis: { gridcolor: "rgba(255,255,255,.06)" },
+        margin: { l: 58, r: 18, t: 14, b: 78 },
+      }, { responsive: true, displaylogo: false });
+    }
+
+    function renderFusionDistribution(calls) {
+      const outcomes = ["up", "down", "sideway"];
+      const total = calls.length || 1;
+      const counts = outcomes.map((outcome) => calls.filter((call) => forecastGroup(call.forecast) === outcome).length);
+      const shares = counts.map((count) => count / total);
+      const accuracies = outcomes.map((outcome) => summarizeFusionCalls(calls.filter((call) => forecastGroup(call.forecast) === outcome)).accuracy);
+      Plotly.newPlot("fusionDistribution", [
+        { type: "bar", name: "Call share", x: outcomes, y: shares, text: counts.map((count) => `${count} calls`), marker: { color: ["#22c55e", "#ef4444", "#e5e7eb"] } },
+        { type: "scatter", mode: "lines+markers", name: "Accuracy", x: outcomes, y: accuracies, yaxis: "y2", line: { color: "#f7931a", width: 3 }, marker: { size: 9 } },
+      ], {
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: "#f8fafc" },
+        hovermode: "x unified", legend: { orientation: "h" },
+        hoverlabel: { bgcolor: "#0b0b0b", bordercolor: "#f7931a", font: { color: "#f8fafc", size: 13 } },
+        yaxis: { title: "Share", tickformat: ".0%", range: [0, Math.max(0.2, Math.max(...shares) * 1.25)], gridcolor: "rgba(255,255,255,.08)" },
+        yaxis2: { title: "Accuracy", overlaying: "y", side: "right", tickformat: ".0%", range: [0, 1], gridcolor: "rgba(255,255,255,0)" },
+        margin: { l: 48, r: 54, t: 14, b: 44 },
+      }, { responsive: true, displaylogo: false });
+    }
+
+    function showFusionRuleDetail(ruleId) {
+      if (!state.fusion) state.fusion = buildFusionModel();
+      const rule = state.fusion?.fusionRules.find((item) => item.id === ruleId);
+      const target = document.getElementById("fusionDetail");
+      if (!rule || !target) return;
+      const recent = rule.hits.slice(-10).reverse();
+      target.innerHTML = `
+        <h4>${rule.name} <span class="tag ${forecastGroup(rule.forecast)}">${forecastGroup(rule.forecast)}</span></h4>
+        <p>Rank score <b>${pct(rule.rankScore)}</b> | Accuracy <b>${pct(rule.accuracy)}</b> | Cases <b>${rule.cases}</b> | Volatility feature hit <b>${pct(rule.volatilityHitRate)}</b>.</p>
+        <p class="muted">Volatility is only an environment feature here; the forecast outcome remains ${forecastGroup(rule.forecast)}.</p>
+        ${recent.length ? table(recent.map((hit) => ({
+          date: hit.date,
+          status: hit.status,
+          actual: hit.outcome.actual,
+          dayReturn: hit.outcome.dayReturn,
+          return3d: hit.outcome.return3d,
+          score: hit.score,
+        })), [
+          ["date", "Date"],
+          ["status", "Status", cleanStatusLabel],
+          ["actual", "Actual"],
+          ["dayReturn", "1D", pct],
+          ["return3d", "3D", pct],
+          ["score", "Score", pct],
+        ]) : `<p class="muted">No evaluated examples yet.</p>`}
+      `;
+    }
+
+    function mergeLiveOhlcv(staticRows, liveRows) {
+      const indexByDate = new Map(state.data.indices.map((row) => [row.date, row]));
+      const merged = new Map(staticRows.map((row) => [row.timestamp, { ...row }]));
+      for (const live of liveRows || []) {
+        const idx = indexByDate.get(live.timestamp) || {};
+        const previous = merged.get(live.timestamp) || {};
+        merged.set(live.timestamp, {
+          ...previous,
+          ...live,
+          index_BTC: idx.index_BTC ?? previous.index_BTC,
+          index_me: idx.index_me ?? previous.index_me,
+          gap_index: idx.index_BTC != null && idx.index_me != null ? idx.index_BTC - idx.index_me : previous.gap_index,
+          pivot_high: previous.pivot_high || 0,
+          pivot_low: previous.pivot_low || 0,
+        });
+      }
+      return [...merged.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    }
+
+    function resetDerivedCaches() {
+      state.marketRowsCache = null;
+      state.marketRowsCacheLatest = null;
+      state.marketIndexCache = null;
+      state.outcomeCache = null;
+      state.indexFeatureCache = null;
+      state.indexPositionByDate = null;
+      state.indexModel = null;
+      state.fusion = null;
+    }
+
+    function populateSelect(select, values, selected) {
+      select.innerHTML = "";
+      values.forEach((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        if (String(value) === String(selected)) option.selected = true;
+        select.appendChild(option);
+      });
+    }
+
+    function renderMetrics() {
+      const meta = state.data.meta;
+      const latest = state.ohlcv.find((row) => row.timestamp === state.latestMarketDate) || state.ohlcv[state.ohlcv.length - 1];
+      const matched = state.ohlcv.filter((row) => row.index_BTC != null && row.index_me != null).length;
+      const cards = [
+        ["Index records", fmt.format(meta.index_records), `${meta.index_start} to ${meta.index_end}`],
+        ["Closed daily candle", state.latestMarketDate, `close ${money(latest?.close)}`],
+        ["Static snapshot", state.staticMarketDate || meta.latest_market_date || "-", `live source ${meta.ohlcv_provider}`],
+        ["Active patterns", fmt.format(state.data.active_patterns.length), `${state.data.unused_patterns.length} on watchlist`],
+      ];
+      document.getElementById("metrics").innerHTML = cards.map(([label, value, note]) => `
+        <div class="card metric"><div class="label">${label}</div><div class="value">${value}</div><div class="note">${note}</div></div>
+      `).join("");
+      document.getElementById("liveStatus").textContent = `Generated ${meta.generated_at} | static ${state.staticMarketDate || "-"} | live daily ${state.latestMarketDate}`;
+    }
+
+    function initSelectors() {
+      const years = [...new Set(state.ohlcv.map((row) => row.timestamp.slice(0, 4)))].sort().reverse();
+      populateSelect(document.getElementById("histYear"), years, years[0]);
+      updateHistMonths();
+      const scenarioYears = [...new Set(state.data.scenario_forecasts.map((row) => row.date.slice(0, 4)))].sort();
+      const preferredYear = state.latestMarketDate?.slice(0, 4) || scenarioYears[0];
+      populateSelect(document.getElementById("futureYear"), scenarioYears, scenarioYears.includes(preferredYear) ? preferredYear : scenarioYears[0]);
+      updateFutureMonths();
+      const fusionYears = [...new Set(state.data.indices.filter((row) => row.date >= FUSION_BACKTEST_START).map((row) => row.date.slice(0, 4)))].sort();
+      populateSelect(document.getElementById("fusionYear"), fusionYears, fusionYears.includes(preferredYear) ? preferredYear : fusionYears[0]);
+      updateFusionMonths();
+    }
+
+    function updateHistMonths() {
+      const year = document.getElementById("histYear").value;
+      const months = [...new Set(state.ohlcv.filter((row) => row.timestamp.startsWith(year)).map((row) => Number(row.timestamp.slice(5, 7))))].sort((a, b) => a - b);
+      populateSelect(document.getElementById("histMonth"), months, months[months.length - 1]);
+    }
+
+    function updateFutureMonths() {
+      const year = document.getElementById("futureYear").value;
+      const rows = state.data.scenario_forecasts.filter((row) => row.date.startsWith(year));
+      const months = [...new Set(rows.map((row) => Number(row.date.slice(5, 7))))].sort((a, b) => a - b);
+      const preferredMonth = Number(state.latestMarketDate?.slice(5, 7));
+      populateSelect(document.getElementById("futureMonth"), months, months.includes(preferredMonth) ? preferredMonth : months[0]);
+    }
+
+    function updateFusionMonths() {
+      const year = document.getElementById("fusionYear").value;
+      const rows = state.data.indices.filter((row) => row.date >= FUSION_BACKTEST_START && row.date.startsWith(year));
+      const months = [...new Set(rows.map((row) => Number(row.date.slice(5, 7))))].sort((a, b) => a - b);
+      const preferredMonth = Number(state.latestMarketDate?.slice(5, 7));
+      populateSelect(document.getElementById("fusionMonth"), months, months.includes(preferredMonth) ? preferredMonth : months[0]);
+    }
+
+    function renderPriceChart() {
+      const year = document.getElementById("histYear").value;
+      const month = String(document.getElementById("histMonth").value).padStart(2, "0");
+      const range = document.getElementById("histRange").value;
+      const anchor = parse(`${year}-${month}-01`);
+      let start = new Date(anchor);
+      const monthsBack = { "1M": 1, "3M": 3, "6M": 6, "12M": 12 }[range];
+      if (monthsBack > 1) start.setUTCMonth(start.getUTCMonth() - monthsBack + 1);
+      const end = new Date(anchor); end.setUTCMonth(end.getUTCMonth() + 1);
+      const rows = state.ohlcv.filter((row) => parse(row.timestamp) >= start && parse(row.timestamp) < end);
+      const turningPatterns = Array.isArray(state.data.turning_patterns) ? state.data.turning_patterns : [];
+      const dailySignals = Array.isArray(state.data.daily_signals) ? state.data.daily_signals : [];
+      const highProb = turningPatterns.filter((row) =>
+        Number(row.observations) >= 5 &&
+        (Number(row.probability_down_3d) >= 0.55 || Number(row.probability_pivot_high_next_N) >= 0.55)
+      );
+      const signalByDate = dailySignals.filter((row) => parse(row.timestamp) >= start && parse(row.timestamp) < end);
+      const traces = [
+        { type: "candlestick", name: "BTC", x: rows.map(r => r.timestamp), open: rows.map(r => r.open), high: rows.map(r => r.high), low: rows.map(r => r.low), close: rows.map(r => r.close), yaxis: "y" },
+        { type: "scatter", mode: "lines", name: "index_BTC", x: rows.map(r => r.timestamp), y: rows.map(r => r.index_BTC), yaxis: "y2", line: { color: "#f7931a", width: 2.4 } },
+        { type: "scatter", mode: "lines", name: "index_me", x: rows.map(r => r.timestamp), y: rows.map(r => r.index_me), yaxis: "y2", line: { color: "#60a5fa", width: 2.4 } },
+        { type: "scatter", mode: "markers", name: "Pivot high", x: rows.filter(r => r.pivot_high === 1).map(r => r.timestamp), y: rows.filter(r => r.pivot_high === 1).map(r => r.close), marker: { color: "#ef4444", size: 10, symbol: "triangle-down" } },
+        { type: "scatter", mode: "markers", name: "Pivot low", x: rows.filter(r => r.pivot_low === 1).map(r => r.timestamp), y: rows.filter(r => r.pivot_low === 1).map(r => r.close), marker: { color: "#22c55e", size: 10, symbol: "triangle-up" } },
+      ];
+      const colorCycle = ["#f97316", "#ef4444", "#a855f7", "#06b6d4", "#facc15"];
+      highProb.slice(0, 6).forEach((pattern, index) => {
+        const signals = signalByDate.filter((row) => row[pattern.signal_column] === true);
+        const prices = signals.map((signal) => rows.find((row) => row.timestamp === signal.timestamp)?.close ?? null);
+        traces.push({
+          type: "scatter", mode: "markers", name: pattern.pattern,
+          x: signals.map(s => s.timestamp), y: prices,
+          marker: { color: colorCycle[index % colorCycle.length], size: 13, symbol: "diamond", line: { color: "#fff", width: 1 } },
+        });
+      });
+      Plotly.newPlot("priceChart", traces, {
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: "#f8fafc" },
+        dragmode: "pan", hovermode: "x unified", legend: { orientation: "h" },
+        hoverlabel: { bgcolor: "#0b0b0b", bordercolor: "#f7931a", font: { color: "#f8fafc", size: 13 } },
+        xaxis: { gridcolor: "rgba(255,255,255,.08)", rangeslider: { visible: false }, showspikes: true, spikecolor: "rgba(255,255,255,.66)", spikemode: "across" },
+        yaxis: { title: "BTC-USDT", domain: [0.42, 1], gridcolor: "rgba(255,255,255,.08)" },
+        yaxis2: { title: "Index", range: [0, 100], domain: [0, 0.33], gridcolor: "rgba(255,255,255,.08)" },
+        margin: { l: 62, r: 24, t: 24, b: 38 },
+      }, { responsive: true, displaylogo: false });
+    }
+
+    function renderFuture() {
+      const year = document.getElementById("futureYear").value;
+      const month = String(document.getElementById("futureMonth").value).padStart(2, "0");
+      const direction = document.getElementById("futureDirection").value;
+      const threshold = Number(document.getElementById("futureThreshold").value);
+      const prefix = `${year}-${month}`;
+      const indexRows = state.data.indices.filter((row) => row.date.startsWith(prefix));
+      const scenarios = futureModelCallsForMonth(prefix, { direction, threshold });
+      Plotly.newPlot("futureChart", [
+        { type: "scatter", mode: "lines+markers", name: "index_BTC", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_BTC), line: { color: "#f7931a", width: 3 } },
+        { type: "scatter", mode: "lines+markers", name: "index_me", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_me), line: { color: "#60a5fa", width: 3 } },
+        { type: "scatter", mode: "markers", name: "forecast", x: scenarios.map(r => r.date), y: scenarios.map(r => state.data.indices.find(i => i.date === r.date)?.index_BTC), marker: { color: scenarios.map(r => r.forecast === "up" ? "#22c55e" : r.forecast === "down" ? "#ef4444" : "#e5e7eb"), size: 13, symbol: "diamond", line: { color: "#fff", width: 1 } } },
+      ], {
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: "#f8fafc" },
+        hovermode: "x unified", legend: { orientation: "h" },
+        hoverlabel: { bgcolor: "#0b0b0b", bordercolor: "#f7931a", font: { color: "#f8fafc", size: 13 } },
+        xaxis: { gridcolor: "rgba(255,255,255,.08)", showspikes: true, spikecolor: "rgba(255,255,255,.66)", spikemode: "across" },
+        yaxis: { title: "Index", range: [0, 100], gridcolor: "rgba(255,255,255,.08)" },
+        margin: { l: 52, r: 24, t: 24, b: 38 },
+      }, { responsive: true, displaylogo: false });
+
+      renderFutureCalendar(prefix, scenarios);
+      renderModelConfidenceScoreboard(prefix, scenarios);
+
+      const colors = { pending: "#fff", correct: "#22c55e", wrong: "#ef4444", partial: "#86efac" };
+      const icons = { pending: "?", correct: "OK", wrong: "X", partial: "~" };
+      const astroByDate = astroMap();
+      const monthSet = indexModelSetForMonth(prefix, threshold);
+      const trainingStart = monthSet.trainingDates[0] || "-";
+      const trainingEnd = monthSet.trainingDates.at(-1) || "-";
+      const methodNote = `
+        <div class="scenario" style="border-left-color:#f7931a">
+          <div class="icon" style="color:#f7931a">M</div>
+          <div>
+            <h4>Index model research <span class="tag">from 2024</span></h4>
+            <p>Future calls use the highest-ranked index rules trained on <b>${monthSet.trainingDates.length}</b> historical closed days (${trainingStart} -> ${trainingEnd}) before the selected month, or all closed history for forward months.</p>
+            <p>Scoring: UP correct >= +3%, partial +0.1% to +3%, wrong <= 0%; DOWN correct <= -3%, partial -0.1% to -3%, wrong >= 0%; SIDEWAY correct from -1% to +1% and has no Partial grade.</p>
+          </div>
+        </div>
+      `;
+      document.getElementById("futureNotes").innerHTML = methodNote + (scenarios.length ? scenarios.map((scenario) => {
+        const graded = scenario.graded || evaluateScenario(scenario);
+        const status = graded.status || scenario.status || "pending";
+        const actual = graded.actual || scenario.actual || "pending";
+        const astro = astroByDate.get(scenario.date);
+        const fusion = bestFusionForScenario(scenario);
+        return `
+          <div class="scenario" style="border-left-color:${colors[status] || "#fff"}">
+            <div class="icon" style="color:${colors[status] || "#fff"}">${icons[status] || "?"}</div>
+            <div>
+              <h4>${scenario.date} <span class="tag ${scenario.forecast}">${scenario.forecast}</span> <span class="tag ${status}">${cleanStatusLabel(status)}</span></h4>
+              <p><b>${scenario.modelName || "Index model"}</b> | confidence <b>${pct(scenario.confidence)}</b> from <b>${scenario.matches}</b> historical cases. Actual: <b>${actual}</b>${graded.isFinal === false ? ` (${graded.horizon} closed candle window, provisional)` : ""}${scenario.trap_warning ? " . Trap warning active." : ""}</p>
+              <p>Astro: ${astroText(astro)}${fusion ? ` | Fusion: <b>${fusion.name}</b> ${pct(fusion.accuracy)} from ${fusion.cases} cases` : ""}</p>
+              <p>Similar dates: ${scenario.similar_dates || "-"}</p>
+            </div>
+            <div class="muted">${graded.dayReturn == null ? "" : `1D ${pct(graded.dayReturn)}`}${graded.return3d == null ? "" : `<br>3D ${pct(graded.return3d)}`}</div>
+          </div>
+        `;
+      }).join("") : `<div class="warn">No index model reaches the selected confidence and direction filters for ${prefix}.</div>`);
+
+      const registry = state.data.registry_ledger
+        .filter((row) => row.date.startsWith(prefix))
+        .sort((a, b) => a.date.localeCompare(b.date) || Number(a.rank) - Number(b.rank));
+      document.getElementById("registryCalls").innerHTML = registry.length ? table(registry.slice(0, 80), [
+        ["date", "Date"], ["icon", "Flag"], ["direction", "Signal"], ["rank", "Rank"],
+        ["historical_probability", "Probability", pct], ["occurrences", "Occurrences"], ["evaluation", "Evaluation"],
+        ["pattern", "Pattern"],
+      ]) : `<p class="muted">No active registry pattern is triggered in this month.</p>`;
+    }
+
+    function renderFusion() {
+      const model = buildFusionModel();
+      state.fusion = model;
+      if (!model) {
+        document.getElementById("fusionMetrics").innerHTML = "";
+        document.getElementById("fusionNotes").innerHTML = "Astro data or market data is not ready for Fusion evaluation.";
+        document.getElementById("fusionRules").innerHTML = `<p class="muted">No fusion data.</p>`;
+        document.getElementById("fusionEvents").innerHTML = `<p class="muted">No evaluated events.</p>`;
+        document.getElementById("fusionCalls").innerHTML = `<p class="muted">No Fusion calls.</p>`;
+        document.getElementById("fusionDetail").innerHTML = "No fusion data.";
+        document.getElementById("fusionCalendar").innerHTML = "";
+        return;
+      }
+      const window = selectedFusionWindow();
+      const prefix = window.prefix;
+      const direction = document.getElementById("fusionDirection").value;
+      const threshold = Number(document.getElementById("fusionThreshold").value);
+      const modelSetName = document.getElementById("fusionSet").value;
+      const monthSet = fusionModelSetForMonth(prefix, threshold);
+      const calls = fusionCallsForWindow(window, { direction, threshold, modelSet: modelSetName });
+      const calendarCalls = fusionCallsForMonth(prefix, { direction, threshold, modelSet: modelSetName });
+      const allWalkForwardCalls = fusionWalkForwardCalls(threshold);
+      const selectedSummary = summarizeFusionCalls(calls);
+      const allSummary = summarizeFusionCalls(allWalkForwardCalls);
+      const bestFusion = monthSet.active[0] || model.fusionRules[0];
+      const summarizeFamily = (rules) => {
+        const cases = rules.reduce((sum, rule) => sum + rule.cases, 0);
+        const score = rules.reduce((sum, rule) => sum + rule.accuracy * rule.cases, 0);
+        return { cases, accuracy: cases ? score / cases : 0 };
+      };
+
+      document.getElementById("fusionMetrics").innerHTML = [
+        fusionScoreCard("Walk-forward Fusion calls", allSummary, `${allSummary.total} evaluated from 2024 | pending ${allSummary.pending}`),
+        fusionScoreCard(`${window.label} Fusion calls`, selectedSummary, `${selectedSummary.total} evaluated | pending ${selectedSummary.pending}`),
+        fusionScoreCard("Active monthly models", summarizeFamily(monthSet.active), `${monthSet.active.length} active | ${monthSet.standby.length} standby`),
+        fusionScoreCard("Best active model", bestFusion, `${bestFusion?.name || "-"} | rank score ${pct(bestFusion?.rankScore || 0)}`),
+      ].join("");
+
+      const trainingStart = monthSet.trainingDates[0] || "-";
+      const trainingEnd = monthSet.trainingDates.at(-1) || "-";
+      document.getElementById("fusionNotes").innerHTML = `
+        <strong>Fusion method:</strong> selected window <b>${window.label}</b>; active models for anchor month <b>${prefix}</b> use ${monthSet.trainingDates.length} training days before that month (${trainingStart} -> ${trainingEnd}).
+        When a new UTC daily candle closes, live OHLCV regrades past calls, then scoreboards and model ranks update automatically.
+        Outcomes are up/down/sideway only. UP is correct at >= +3% and partial from +0.1% to +3%; DOWN is correct at <= -3% and partial from -0.1% to -3%; SIDEWAY is correct only from -1% to +1% and never receives Partial. Volatility hit is a secondary feature in the rank/model context.
+      `;
+
+      const indexRows = state.data.indices.filter((row) => isDateInWindow(row.date, window));
+      const priceRows = state.ohlcv.filter((row) => isDateInWindow(row.timestamp, window));
+      const astroRows = state.astro.filter((row) => isDateInWindow(row.date, window));
+      const showPrice = document.getElementById("fusionLayerPrice")?.checked ?? true;
+      const showIndex = document.getElementById("fusionLayerIndex")?.checked ?? true;
+      const showAstro = document.getElementById("fusionLayerAstro")?.checked ?? true;
+      const showFusion = document.getElementById("fusionLayerFusion")?.checked ?? true;
+      const forecastColors = { up: "#22c55e", down: "#ef4444", sideway: "#e5e7eb" };
+      const traces = [];
+      if (showPrice) {
+        traces.push({ type: "scatter", mode: "lines", name: "BTC close", x: priceRows.map(r => r.timestamp), y: priceRows.map(r => r.close), yaxis: "y", line: { color: "#f8fafc", width: 2.2 } });
+      }
+      if (showIndex) {
+        traces.push({ type: "scatter", mode: "lines+markers", name: "index_BTC", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_BTC), yaxis: "y2", line: { color: "#f7931a", width: 3 } });
+        traces.push({ type: "scatter", mode: "lines+markers", name: "index_me", x: indexRows.map(r => r.date), y: indexRows.map(r => r.index_me), yaxis: "y2", line: { color: "#60a5fa", width: 3 } });
+      }
+      if (showAstro) {
+        traces.push({ type: "scatter", mode: "lines", name: "astro composite", x: astroRows.map(r => r.date), y: astroRows.map(r => r.composite), yaxis: "y2", line: { color: "#c084fc", width: 2, dash: "dot" } });
+        traces.push({ type: "scatter", mode: "markers", name: "astro event", x: astroRows.filter(r => r.event).map(r => r.date), y: astroRows.filter(r => r.event).map(() => 96), yaxis: "y2", marker: { color: "#facc15", size: 8, symbol: "x" } });
+      }
+      if (showFusion) {
+        traces.push({
+          type: "scatter", mode: "markers", name: "Fusion call", yaxis: "y2",
+          x: calls.map(r => r.date),
+          y: calls.map(r => r.context.index?.index_BTC ?? 50),
+          text: calls.map(r => `${r.rule.name}<br>${forecastGroup(r.forecast)} ${pct(r.confidence)}<br>${r.status}`),
+          marker: { color: calls.map(r => forecastColors[forecastGroup(r.forecast)] || "#fff"), size: 15, symbol: "diamond", line: { color: "#050505", width: 1 } },
+        });
+      }
+      Plotly.newPlot("fusionChart", traces, {
+        paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: { color: "#f8fafc" },
+        hovermode: "x unified", legend: { orientation: "h" },
+        hoverlabel: { bgcolor: "#0b0b0b", bordercolor: "#f7931a", font: { color: "#f8fafc", size: 13 } },
+        xaxis: { gridcolor: "rgba(255,255,255,.08)", showspikes: true, spikecolor: "rgba(255,255,255,.66)", spikemode: "across" },
+        yaxis: { title: "BTC-USDT", domain: [0.43, 1], gridcolor: "rgba(255,255,255,.08)" },
+        yaxis2: { title: "Index / Astro", range: [0, 100], domain: [0, 0.34], gridcolor: "rgba(255,255,255,.08)" },
+        margin: { l: 52, r: 24, t: 24, b: 38 },
+      }, { responsive: true, displaylogo: false });
+      renderFusionCalendar(prefix, calendarCalls);
+      renderFusionHeatmap(model);
+      renderFusionDistribution(calls);
+
+      const callScoreCard = (label, rows) => {
+        const summary = summarizeFusionCalls(rows);
+        return `
+          <div class="score-card">
+            <div class="label">${label}</div>
+            <div class="value">${pct(summary.accuracy)}</div>
+            <div class="mini">${summary.total} evaluated | Correct ${summary.correct} | Partial ${summary.partial} | Wrong ${summary.wrong} | pending ${summary.pending}</div>
+            <div class="bar"><span style="width:${Math.round(summary.accuracy * 100)}%"></span></div>
+          </div>
+        `;
+      };
+      const groupedCalls = [
+        ["All walk-forward calls", allWalkForwardCalls],
+        [`${window.label} selected calls`, calls],
+        ["Up fusion", calls.filter((call) => forecastGroup(call.forecast) === "up")],
+        ["Down fusion", calls.filter((call) => forecastGroup(call.forecast) === "down")],
+        ["Sideway fusion", calls.filter((call) => forecastGroup(call.forecast) === "sideway")],
+      ];
+      ["80-100% confidence", "66-79% confidence", "55-65% confidence", "45-54% confidence", "36-44% confidence"].forEach((bucket) => {
+        const rows = allWalkForwardCalls.filter((call) => confidenceBucket(call.confidence) === bucket);
+        if (rows.length) groupedCalls.push([bucket, rows]);
+      });
+      document.getElementById("fusionScoreboard").innerHTML = `
+        <div class="score-grid">
+          ${groupedCalls.filter(([, rows]) => rows.length).map(([label, rows]) => callScoreCard(label, rows)).join("")}
+        </div>
+      `;
+
+      const colors = { pending: "#fff", correct: "#22c55e", wrong: "#ef4444", partial: "#86efac" };
+      const icons = { pending: "?", correct: "OK", wrong: "X", partial: "~" };
+      document.getElementById("fusionCalls").innerHTML = calls.length ? calls.map((call) => `
+        <div class="scenario" style="border-left-color:${colors[call.status] || "#fff"}" onclick="showFusionRuleDetail('${call.rule.id}')">
+          <div class="icon" style="color:${colors[call.status] || "#fff"}">${icons[call.status] || "?"}</div>
+          <div>
+            <h4>${call.date} <span class="tag ${forecastGroup(call.forecast)}">${forecastGroup(call.forecast)}</span> <span class="tag ${call.status}">${cleanStatusLabel(call.status)}${call.provisional ? " / provisional" : ""}</span></h4>
+            <p>Primary model: <b>${call.rule.name}</b> | model score <b>${pct(call.rule.accuracy)}</b> from <b>${call.rule.cases}</b> historical cases | rank score <b>${pct(call.rule.rankScore)}</b>.</p>
+            <p>Astro: ${astroText(call.context.astro)} | Index gap: <b>${call.context.feature ? call.context.feature.gap.toFixed(1) : "-"}</b>${call.context.feature?.oppositePhase ? " | opposite phase" : ""}${call.context.feature?.shock ? " | shock" : ""}</p>
+            <p>Supporting models: ${call.support.length ? call.support.map((rule) => `${rule.name} ${pct(rule.accuracy)}`).join(" | ") : "-"}</p>
+            <p>Similar winning dates for primary model: ${call.rule.winningExamples || "-"}</p>
+          </div>
+          <div class="muted">${call.dayReturn == null ? "" : `1D ${pct(call.dayReturn)}`}${call.return3d == null ? "" : `<br>3D ${pct(call.return3d)}`}</div>
+        </div>
+      `).join("") : `<div class="warn">No Fusion call reaches the selected filters for ${prefix}.</div>`;
+
+      const modelCard = (rule) => `
+        <div class="model-card" onclick="showFusionRuleDetail('${rule.id}')">
+          <span class="tag ${forecastGroup(rule.forecast)}">${forecastGroup(rule.forecast)}</span>
+          <span class="tag">rank #${rule.monthlyRank || "-"}</span>
+          <strong>${rule.name}</strong>
+          <div class="mini">${rule.cases} train cases | accuracy ${pct(rule.accuracy)} | recent90 ${pct(rule.recent90Accuracy)} | rank score ${pct(rule.rankScore)}</div>
+          <button class="chip-button" type="button">Details</button>
+        </div>
+      `;
+      document.getElementById("fusionActiveModels").innerHTML = monthSet.active.length ? monthSet.active.slice(0, FUSION_ACTIVE_LIMIT).map(modelCard).join("") : `<div class="warn">Not enough prior training data to activate Fusion models for ${prefix}.</div>`;
+      document.getElementById("fusionStandbyModels").innerHTML = monthSet.standby.length ? monthSet.standby.slice(0, FUSION_ACTIVE_LIMIT).map(modelCard).join("") : `<p class="muted">No standby models.</p>`;
+
+      const activeIds = new Set(monthSet.active.map((rule) => rule.id));
+      const tableRows = model.fusionRules.map((rule) => {
+        const monthStats = summarizeFusionHits(rule.hits.filter((hit) => hit.date.startsWith(prefix)));
+        return {
+          ...rule,
+          displayForecast: forecastGroup(rule.forecast),
+          monthlyStatus: activeIds.has(rule.id) ? "active" : "standby",
+          selectedMonthCases: monthStats.total,
+          selectedMonthAccuracy: monthStats.accuracy,
+        };
+      }).sort((a, b) => (Number(activeIds.has(b.id)) - Number(activeIds.has(a.id))) || (b.rankScore - a.rankScore));
+      document.getElementById("fusionRules").innerHTML = table(tableRows, [
+        ["monthlyStatus", "Set"],
+        ["name", "Rule"],
+        ["displayForecast", "Forecast"],
+        ["cases", "Cases"],
+        ["accuracy", "Accuracy", pct],
+        ["recent90Accuracy", "Recent 90d", pct],
+        ["selectedMonthCases", `${prefix} cases`],
+        ["selectedMonthAccuracy", `${prefix} accuracy`, pct],
+        ["rankScore", "Rank score", pct],
+        ["averageReturn3d", "Avg 3d", pct],
+        ["volatilityHitRate", "Vol hit", pct],
+        ["wrong", "Wrong"],
+        ["winningExamples", "Similar winning dates"],
+      ]);
+      if (bestFusion) showFusionRuleDetail(bestFusion.id);
+
+      const recentEvents = allWalkForwardCalls.filter((call) => call.score != null).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 18);
+      document.getElementById("fusionEvents").innerHTML = recentEvents.length ? recentEvents.map((event) => {
+        const scenario = event.context.scenarios[0];
+        const astro = event.context.astro;
+        return `
+          <div class="fusion-event">
+            <div class="date">${event.date}</div>
+            <div>
+              <p><strong>${event.rule.name}</strong> <span class="tag ${forecastGroup(event.forecast)}">${forecastGroup(event.forecast)}</span> <span class="tag ${event.status}">${cleanStatusLabel(event.status)}${event.provisional ? " / provisional" : ""}</span></p>
+              <p>Astro: ${astroText(astro)}</p>
+              <p>Index: ${scenario ? `${scenario.forecast} ${pct(scenario.confidence)} from ${scenario.matches} analogs` : "No scenario call"} | Actual: ${event.actual}</p>
+            </div>
+            <div class="score">1D ${pct(event.dayReturn)}<br>3D ${pct(event.return3d)}</div>
+          </div>
+        `;
+      }).join("") : `<p class="muted">No evaluated fusion events yet.</p>`;
+    }
+
+    function renderPatterns() {
+      const renderList = (rows) => rows.map((row) => `
+        <div class="pattern-item">
+          <span class="tag ${row.direction}">${row.direction}</span>
+          <span class="tag">rank #${row.rank}</span>
+          <strong>${row.pattern}</strong>
+          <div class="muted">${row.occurrences} occurrences | accuracy ${pct(row.hit_rate)}</div>
+        </div>
+      `).join("");
+      document.getElementById("activePatterns").innerHTML = renderList(state.data.active_patterns);
+      document.getElementById("unusedPatterns").innerHTML = renderList(state.data.unused_patterns);
+    }
+
+    function table(rows, columns) {
+      if (!rows || !rows.length) return `<p class="muted">No rows.</p>`;
+      return `<div style="overflow:auto"><table><thead><tr>${columns.map(([, label]) => `<th>${label}</th>`).join("")}</tr></thead><tbody>${
+        rows.map((row) => `<tr>${columns.map(([key, , format]) => `<td>${format ? format(row[key], row) : row[key] ?? "-"}</td>`).join("")}</tr>`).join("")
+      }</tbody></table></div>`;
+    }
+
+    function renderTables() {
+      document.getElementById("tableIndexZones").innerHTML = table(state.data.tables.index_zones, [
+        ["zone", "Zone"], ["observations", "Count"], ["pivot_high_next_N", "Pivot high", pct],
+        ["pivot_low_next_N", "Pivot low", pct], ["mean_return_3d", "3d return", pct], ["mean_return_7d", "7d return", pct],
+      ]);
+      document.getElementById("tablePatterns").innerHTML = table(state.data.tables.patterns, [
+        ["pattern", "Pattern"], ["observations", "Observations"], ["probability", "Probability", pct],
+      ]);
+      document.getElementById("tableWeekday").innerHTML = table(state.data.tables.weekday, [
+        ["weekday", "Weekday"], ["observations", "Count"], ["mean_return_3d", "3d return", pct], ["mean_return_7d", "7d return", pct],
+        ["pivot_high_next_N", "Pivot high", pct], ["pivot_low_next_N", "Pivot low", pct],
+      ]);
+      document.getElementById("tableMoveResearch").innerHTML = table(state.data.move_research, [
+        ["BTC move label", "Label"], ["observations", "Events"], ["same_phase_rate", "Same phase", pct], ["opposite_phase_rate", "Opposite phase", pct],
+        ["shock_rate", "Shock", pct], ["pivot_context_rate", "Pivot context", pct],
+      ]);
+    }
+
+    function setMenuOpen(open) {
+      const menu = document.getElementById("sectionMenu");
+      const button = document.getElementById("menuToggle");
+      const scrim = document.getElementById("menuScrim");
+      menu?.classList.toggle("open", open);
+      scrim?.classList.toggle("open", open);
+      button?.setAttribute("aria-expanded", String(open));
+    }
+
+    function bindEvents() {
+      document.getElementById("menuToggle").addEventListener("click", () => {
+        setMenuOpen(!document.getElementById("sectionMenu").classList.contains("open"));
+      });
+      document.getElementById("menuScrim").addEventListener("click", () => setMenuOpen(false));
+      document.querySelectorAll(".tab").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
+          document.querySelectorAll(".pane").forEach((item) => item.classList.remove("active"));
+          button.classList.add("active");
+          document.getElementById(button.dataset.pane).classList.add("active");
+          setMenuOpen(false);
+          if (typeof window !== "undefined" && window.scrollTo) window.scrollTo({ top: 0, behavior: "smooth" });
+          const pane = button.dataset.pane;
+          setTimeout(() => {
+            if (pane === "charts") renderPriceChart();
+            if (pane === "future") renderFuture();
+            if (pane === "fusion") renderFusion();
+          }, 30);
+        });
+      });
+      document.getElementById("histYear").addEventListener("change", () => { updateHistMonths(); renderPriceChart(); });
+      document.getElementById("histMonth").addEventListener("change", renderPriceChart);
+      document.getElementById("histRange").addEventListener("change", renderPriceChart);
+      document.getElementById("futureYear").addEventListener("change", () => { updateFutureMonths(); renderFuture(); });
+      document.getElementById("futureMonth").addEventListener("change", renderFuture);
+      document.getElementById("futureDirection").addEventListener("change", renderFuture);
+      document.getElementById("futureThreshold").addEventListener("input", renderFuture);
+      document.getElementById("fusionYear").addEventListener("change", () => { updateFusionMonths(); renderFusion(); });
+      document.getElementById("fusionMonth").addEventListener("change", renderFusion);
+      document.getElementById("fusionRange").addEventListener("change", renderFusion);
+      document.getElementById("fusionDirection").addEventListener("change", renderFusion);
+      document.getElementById("fusionThreshold").addEventListener("input", renderFusion);
+      document.getElementById("fusionSet").addEventListener("change", renderFusion);
+      ["fusionLayerPrice", "fusionLayerIndex", "fusionLayerAstro", "fusionLayerFusion"].forEach((id) => {
+        document.getElementById(id).addEventListener("change", renderFusion);
+      });
+    }
+
+    async function load() {
+      const response = await fetch("/data/dashboard.json", { cache: "no-cache" });
+      state.data = expandCompactDashboard(await response.json());
+      try {
+        const astroResponse = await fetch("/data/astro_scores.json", { cache: "no-cache" });
+        if (astroResponse.ok) {
+          const astroPayload = await astroResponse.json();
+          state.astro = astroPayload.rows || [];
+          state.astroMeta = astroPayload.meta || null;
+        }
+      } catch (error) {
+        console.warn("Astro scores unavailable", error);
+      }
+      let liveRows = [];
+      try {
+        const live = await fetch(`/api/ohlcv?timeframe=1d&start=${state.data.meta.index_start}`, { cache: "no-store" });
+        if (live.ok) {
+          const livePayload = await live.json();
+          liveRows = livePayload.rows || [];
+          state.data.meta.ohlcv_provider = `${livePayload.provider} live`;
+        }
+      } catch (error) {
+        console.warn("Live OHLCV fallback to static snapshot", error);
+      }
+      const staticRows = Array.isArray(state.data.ohlcv) ? state.data.ohlcv : [];
+      state.ohlcv = mergeLiveOhlcv(staticRows, liveRows);
+      state.staticMarketDate = state.data.meta.latest_market_date;
+      state.latestMarketDate = state.ohlcv.at(-1)?.timestamp || state.data.meta.latest_market_date;
+      state.data.meta.latest_market_date = state.latestMarketDate;
+      resetDerivedCaches();
+      renderMetrics();
+      initSelectors();
+      bindEvents();
+      renderPriceChart();
+      renderPatterns();
+      renderTables();
+    }
+
+    load().catch((error) => {
+      document.body.innerHTML = `<main><div class="warn">Dashboard failed to load: ${error.message}</div></main>`;
+      console.error(error);
+    });
+  </script>
+</body>
+</html>

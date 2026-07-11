@@ -1,8 +1,42 @@
 {
-  "name": "btc-energy-index-lab",
-  "version": "1.0.0",
+  "name": "elab-hybrid-quant-console",
+  "version": "2.0.0",
   "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
-    "build": "node -e \"console.log('Static BTC Energy Index Lab ready')\""
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lightweight-charts": "^5.0.9",
+    "lucide-react": "^0.468.0",
+    "next": "16.1.6",
+    "next-themes": "^0.4.6",
+    "radix-ui": "^1.6.2",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "recharts": "^3.1.2",
+    "shadcn": "^4.13.0",
+    "swr": "^2.3.6",
+    "tailwind-merge": "^3.6.0",
+    "tw-animate-css": "^1.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.3",
+    "@types/react-dom": "^19.0.2",
+    "eslint": "^9.17.0",
+    "eslint-config-next": "16.1.6",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.7.2"
   }
 }
