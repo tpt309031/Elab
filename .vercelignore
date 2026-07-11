@@ -4,7 +4,6 @@ work
 outputs
 tests
 scripts
-src
 __pycache__
 *.pyc
 *.pyo
