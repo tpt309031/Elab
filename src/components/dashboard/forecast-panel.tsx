@@ -16,9 +16,9 @@ interface ForecastPanelProps {
   data: ResearchArtifact;
 }
 
-function mergeForecastRows(history: ForecastRow[], future: ForecastRow[]): ForecastRow[] {
-  const rows = new Map(history.map((row) => [row.date, row]));
-  for (const row of future) rows.set(row.date, row);
+function mergeForecastRows(...sources: ForecastRow[][]): ForecastRow[] {
+  const rows = new Map<string, ForecastRow>();
+  for (const source of sources) for (const row of source) rows.set(row.date, row);
   return [...rows.values()].sort((left, right) => left.date.localeCompare(right.date));
 }
 
@@ -36,12 +36,18 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
   const [month, setMonth] = useState(initialMonth);
   const [direction, setDirection] = useState<ForecastDirection | "all">("all");
   const [selected, setSelected] = useState<ForecastRow>();
-  const laneRows = useMemo(() => lane === "calendar"
-    ? mergeForecastRows(data.forecast.historical_calendar_oos, data.forecast.calendar)
-    : mergeForecastRows(
-      data.forecast.historical_full_hybrid_oos,
-      buildFusionFutureRows(data.forecast.calendar, data.forecast.full_hybrid_next_session),
-    ), [data, lane]);
+  const laneRows = useMemo(() => {
+    const official = (data.learning?.official_forecast_ledger ?? [])
+      .filter((row) => row.lane === (lane === "calendar" ? "Calendar" : "Full Hybrid"))
+      .map((row) => ({ ...row, daily_return: row.actual_return, lane: `${row.lane} · official` }));
+    return lane === "calendar"
+      ? mergeForecastRows(data.forecast.historical_calendar_oos, data.forecast.calendar, official)
+      : mergeForecastRows(
+        data.forecast.historical_full_hybrid_oos,
+        buildFusionFutureRows(data.forecast.calendar, data.forecast.full_hybrid_next_session),
+        official,
+      );
+  }, [data, lane]);
   const filtered = useMemo(() => laneRows.filter((row) => row.date.startsWith(month) && (direction === "all" || row.forecast === direction)), [direction, laneRows, month]);
   const years = useMemo(() => [...new Set(laneRows.map((row) => row.date.slice(0, 4)))].sort(), [laneRows]);
   const selectedYear = month.slice(0, 4);

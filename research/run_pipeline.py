@@ -27,6 +27,16 @@ from research.hybrid_core import (
     serialize_frame,
     utc_now,
 )
+from research.learning import (
+    append_official_forecast,
+    apply_live_model_ranking,
+    apply_live_pattern_ranking,
+    grade_learning_state,
+    learning_summary,
+    load_learning_state,
+    record_selection_snapshot,
+    serialize_learning_state,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,8 +94,70 @@ def _availability(include_deep: bool) -> list[dict[str, object]]:
     return rows
 
 
+def _read_previous_artifact(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _bootstrap_published_forecasts(state: dict[str, object], payload: dict[str, object]) -> int:
+    meta = payload.get("meta", {}) if isinstance(payload.get("meta"), dict) else {}
+    forecast_payload = payload.get("forecast", {}) if isinstance(payload.get("forecast"), dict) else {}
+    model_payload = payload.get("models", {}) if isinstance(payload.get("models"), dict) else {}
+    issued_at = str(meta.get("generated_at", ""))
+    closed_through = str(meta.get("latest_closed_utc", ""))
+    if not issued_at or not closed_through:
+        return 0
+    lane_sources = [
+        ("Calendar", "calendar", "calendar_latest_selection"),
+        ("Full Hybrid", "full_hybrid_next_session", "full_hybrid_latest_selection"),
+    ]
+    added = 0
+    for lane, forecast_key, selection_key in lane_sources:
+        rows = forecast_payload.get(forecast_key, [])
+        if not isinstance(rows, list):
+            continue
+        candidates = sorted(
+            (row for row in rows if isinstance(row, dict) and str(row.get("date", "")) > closed_through),
+            key=lambda row: str(row.get("date", "")),
+        )
+        if not candidates:
+            continue
+        selection = model_payload.get(selection_key, [])
+        added += int(append_official_forecast(
+            state,
+            candidates[0],
+            lane,
+            issued_at,
+            closed_through,
+            selection if isinstance(selection, list) else [],
+        ))
+    return added
+
+
+def _enrich_selection(selection: pd.DataFrame, metrics: pd.DataFrame) -> pd.DataFrame:
+    if selection.empty or metrics.empty:
+        return selection
+    columns = [
+        "model", "rank", "live_samples", "live_weighted_accuracy", "live_directional_accuracy",
+        "live_expectancy", "adjusted_weighted_accuracy", "adaptive_rank_score", "selection_change",
+        "replacement_reason",
+    ]
+    available = [column for column in columns if column in metrics]
+    return selection.merge(metrics[available], on="model", how="left")
+
+
 def main() -> None:
     args = parse_args()
+    run_at = utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")
+    previous_payload = _read_previous_artifact(args.output)
+    learning_state_path = ROOT / "data" / "learning_state.json"
+    learning_state = load_learning_state(learning_state_path)
+    bootstrapped_forecasts = _bootstrap_published_forecasts(learning_state, previous_payload)
     indices = load_indices(
         ROOT / "data" / "newdata" / "index_btc.csv",
         ROOT / "data" / "newdata" / "index_me.csv",
@@ -97,6 +169,8 @@ def main() -> None:
         provider = "committed cache"
     else:
         market, provider = refresh_daily_market(cache_path)
+    latest_closed = pd.to_datetime(market["timestamp"]).max().normalize()
+    evaluated_forecasts = grade_learning_state(learning_state, market, latest_closed, run_at)
     frame, groups = build_feature_frame(indices, market, astro)
     analog_columns = [
         "index_BTC", "index_me", "gap_index", "index_btc_change_1", "index_me_change_1",
@@ -122,6 +196,8 @@ def main() -> None:
         len(groups["sequence_full_base"]),
         args.deep,
     )
+    calendar.model_metrics = apply_live_model_ranking(calendar.model_metrics, learning_state, "Calendar")
+    full.model_metrics = apply_live_model_ranking(full.model_metrics, learning_state, "Full Hybrid")
     calendar_preferred = calendar.model_metrics.loc[
         (calendar.model_metrics["status"] == "active")
         & (calendar.model_metrics["expectancy"] > 0)
@@ -144,6 +220,7 @@ def main() -> None:
         args.deep,
         policy_history=calendar.forecasts,
         preferred_models=calendar_preferred,
+        pattern_adjuster=lambda registry: apply_live_pattern_ranking(registry, learning_state, "Calendar"),
     )
     full_future, full_selection, full_registry = fit_latest_forecasts(
         frame,
@@ -156,6 +233,34 @@ def main() -> None:
         max_future_days=1,
         policy_history=full.forecasts,
         preferred_models=full_preferred,
+        pattern_adjuster=lambda registry: apply_live_pattern_ranking(registry, learning_state, "Full Hybrid"),
+    )
+    calendar_selection = _enrich_selection(calendar_selection, calendar.model_metrics)
+    full_selection = _enrich_selection(full_selection, full.model_metrics)
+    if not calendar_future.empty:
+        append_official_forecast(
+            learning_state,
+            serialize_frame(calendar_future.head(1))[0],
+            "Calendar",
+            run_at,
+            latest_closed.strftime("%Y-%m-%d"),
+            serialize_frame(calendar_selection, date_columns=()),
+        )
+    if not full_future.empty:
+        append_official_forecast(
+            learning_state,
+            serialize_frame(full_future.head(1))[0],
+            "Full Hybrid",
+            run_at,
+            latest_closed.strftime("%Y-%m-%d"),
+            serialize_frame(full_selection, date_columns=()),
+        )
+    record_selection_snapshot(
+        learning_state,
+        latest_closed.strftime("%Y-%m-%d"),
+        run_at,
+        {"Calendar": calendar.model_metrics, "Full Hybrid": full.model_metrics},
+        {"Calendar": calendar_registry, "Full Hybrid": full_registry},
     )
     all_metrics = pd.concat([
         calendar.model_metrics.assign(lane="Calendar"),
@@ -166,7 +271,6 @@ def main() -> None:
         _monthly_metrics(calendar.forecasts, "Calendar"),
         _monthly_metrics(full.forecasts, "Full Hybrid"),
     ], ignore_index=True)
-    latest_closed = pd.to_datetime(market["timestamp"]).max().normalize()
     target_accuracy = 0.70
     eligible_metrics = all_metrics[(all_metrics["expectancy"] > 0) & (all_metrics["coverage"] >= 0.8)]
     achieved = eligible_metrics["directional_accuracy"].max() if not eligible_metrics.empty else 0
@@ -176,8 +280,8 @@ def main() -> None:
     ))
     payload = {
         "meta": {
-            "schema_version": 2,
-            "generated_at": utc_now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "schema_version": 3,
+            "generated_at": run_at,
             "market_provider": provider,
             "latest_closed_utc": latest_closed.strftime("%Y-%m-%d"),
             "oos_start": OOS_START.strftime("%Y-%m-%d"),
@@ -202,6 +306,8 @@ def main() -> None:
                 "maximum_no_calls_per_month": 6,
                 "maximum_sideway_calls_per_month": MAX_SIDEWAY_PER_MONTH,
                 "transaction_cost_bps": 5,
+                "daily_evaluation_utc": "03:20",
+                "official_forecasts_are_immutable": True,
             },
         },
         "market": _compact_ohlcv(market),
@@ -242,12 +348,20 @@ def main() -> None:
             "correlation_heatmap": serialize_frame(feature_heatmap(frame, groups), date_columns=()),
             "feature_groups": {key: value for key, value in groups.items() if not key.endswith("_base") and not key.startswith("sequence")},
         },
+        "learning": {
+            "summary": learning_summary(learning_state),
+            "official_forecast_ledger": learning_state.get("forecasts", []),
+            "selection_history": learning_state.get("selection_history", []),
+            "evaluated_this_run": evaluated_forecasts,
+            "bootstrapped_this_run": bootstrapped_forecasts,
+        },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     content = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
     args.output.write_text(content, encoding="utf-8")
     mirror = ROOT / "data" / "hybrid_research.json"
     mirror.write_text(content, encoding="utf-8")
+    learning_state_path.write_text(serialize_learning_state(learning_state), encoding="utf-8")
     print(json.dumps({
         "output": str(args.output),
         "bytes": len(content),
@@ -257,6 +371,8 @@ def main() -> None:
         "future_rows": len(calendar_future),
         "achieved_directional_accuracy": round(float(achieved), 4),
         "target_reached": bool(achieved >= target_accuracy),
+        "evaluated_forecasts": evaluated_forecasts,
+        "official_ledger_rows": len(learning_state.get("forecasts", [])),
     }, indent=2))
 
 

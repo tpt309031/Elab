@@ -28,7 +28,7 @@ export function PatternPanel({ data }: PatternPanelProps) {
   const selected = patterns.find((pattern) => patternKey(pattern) === selectedId) ?? patterns[0];
   const chartData = useMemo(() => patterns.slice(0, 16).map((pattern) => ({
     name: `#${pattern.rank}`,
-    accuracy: pattern.weighted_accuracy * 100,
+    accuracy: (pattern.adjusted_weighted_accuracy ?? pattern.weighted_accuracy) * 100,
     direction: pattern.direction,
   })), [patterns]);
   return (
@@ -49,7 +49,7 @@ export function PatternPanel({ data }: PatternPanelProps) {
               className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border p-3 text-left transition hover:border-primary/70 ${selected && patternKey(selected) === patternKey(pattern) ? "border-primary bg-primary/5" : "border-border bg-card"}`}
             >
               <span className="grid size-8 place-content-center border border-border bg-background font-mono text-xs">{pattern.rank}</span>
-              <span className="min-w-0"><b className="block truncate text-sm font-medium">{pattern.pattern}</b><small className="mt-1 block font-mono text-[10px] text-muted-foreground">n={pattern.occurrences} · {formatPercent(pattern.weighted_accuracy)} weighted</small></span>
+              <span className="min-w-0"><b className="flex items-center gap-2 truncate text-sm font-medium">{pattern.pattern}{pattern.selection_change === "promoted" && <Badge className="h-4 px-1 text-[8px]">NEW</Badge>}</b><small className="mt-1 block font-mono text-[10px] text-muted-foreground">n={pattern.occurrences} · {formatPercent(pattern.adjusted_weighted_accuracy ?? pattern.weighted_accuracy)} adjusted · live n={pattern.live_occurrences ?? 0}</small></span>
               <DirectionIcon direction={pattern.direction} />
             </button>
           ))}
@@ -72,18 +72,19 @@ export function PatternPanel({ data }: PatternPanelProps) {
       <aside className="space-y-4 xl:sticky xl:top-4 xl:self-start">
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between gap-2"><Badge variant="outline">Rank {selected?.rank ?? "—"}</Badge><Badge>{selected?.status ?? "standby"}</Badge></div>
+            <div className="flex items-center justify-between gap-2"><Badge variant="outline">Rank {selected?.rank ?? "—"}</Badge><div className="flex gap-2"><Badge>{selected?.status ?? "standby"}</Badge>{selected?.selection_change && <Badge variant="outline">{selected.selection_change}</Badge>}</div></div>
             <CardTitle className="pt-2 text-lg">{selected?.pattern ?? "No eligible pattern"}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {selected && <>
               <div className="grid grid-cols-2 gap-2">
                 <div className="border border-border p-3"><p className="eyebrow">occurrences</p><strong className="metric-value">{selected.occurrences}</strong></div>
-                <div className="border border-border p-3"><p className="eyebrow">weighted hit</p><strong className="metric-value">{formatPercent(selected.weighted_accuracy)}</strong></div>
+                <div className="border border-border p-3"><p className="eyebrow">adjusted hit</p><strong className="metric-value">{formatPercent(selected.adjusted_weighted_accuracy ?? selected.weighted_accuracy)}</strong></div>
                 <div className="border border-border p-3"><p className="eyebrow">exact hit</p><strong className="metric-value">{formatPercent(selected.exact_accuracy)}</strong></div>
                 <div className="border border-border p-3"><p className="eyebrow">expectancy</p><strong className={selected.expectancy >= 0 ? "metric-value text-emerald-400" : "metric-value text-red-400"}>{formatSignedPercent(selected.expectancy)}</strong></div>
               </div>
               <div className="border border-border p-3"><p className="eyebrow">rule expression</p><code className="mt-2 block break-words font-mono text-[11px] leading-5 text-muted-foreground">{selected.expression}</code></div>
+              {selected.replacement_reason && <p className="border-l-2 border-primary px-3 text-xs text-muted-foreground">{selected.replacement_reason}</p>}
               <div><p className="mb-2 flex items-center gap-2 text-xs font-medium"><History className="size-4 text-primary" />Recent historical occurrences</p><div className="flex flex-wrap gap-2">{selected.examples.map((date) => <Badge variant="secondary" key={date}>{date}</Badge>)}</div></div>
             </>}
           </CardContent>

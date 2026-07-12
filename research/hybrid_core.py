@@ -620,7 +620,10 @@ def pattern_probabilities(frame: pd.DataFrame, registry: pd.DataFrame) -> np.nda
     probabilities = np.full((len(frame), 3), 1 / 3, dtype=float)
     if registry.empty or frame.empty:
         return probabilities
-    active = registry[registry["eligible"]].copy()
+    active_mask = registry["eligible"].astype(bool)
+    if "status" in registry:
+        active_mask &= registry["status"].eq("active")
+    active = registry[active_mask].copy()
     action_votes = np.zeros((len(frame), 3), dtype=float)
     for _, rule in active.iterrows():
         try:
@@ -1257,11 +1260,16 @@ def _analog_forecast_bundle(
     return calibration_probabilities, probabilities, details
 
 
-def _matching_patterns(frame: pd.DataFrame, registry: pd.DataFrame) -> list[dict[str, object] | None]:
+def _matching_pattern_sets(frame: pd.DataFrame, registry: pd.DataFrame) -> list[list[dict[str, object]]]:
     matches: list[list[dict[str, object]]] = [[] for _ in range(len(frame))]
     if registry.empty:
-        return [None for _ in range(len(frame))]
-    eligible = registry[registry["eligible"]].sort_values("rank_score", ascending=False)
+        return matches
+    active_mask = registry["eligible"].astype(bool)
+    if "status" in registry:
+        active_mask &= registry["status"].eq("active")
+    score_column = "adaptive_rank_score" if "adaptive_rank_score" in registry else "rank_score"
+    accuracy_column = "adjusted_weighted_accuracy" if "adjusted_weighted_accuracy" in registry else "weighted_accuracy"
+    eligible = registry[active_mask].sort_values(score_column, ascending=False)
     for _, rule in eligible.iterrows():
         try:
             mask = frame.eval(str(rule["expression"]), engine="python").fillna(False).to_numpy(dtype=bool)
@@ -1273,10 +1281,10 @@ def _matching_patterns(frame: pd.DataFrame, registry: pd.DataFrame) -> list[dict
                 "name": str(rule["pattern"]),
                 "direction": str(rule["direction"]),
                 "occurrences": int(rule["occurrences"]),
-                "weighted_accuracy": float(rule["weighted_accuracy"]),
+                "weighted_accuracy": float(rule[accuracy_column]),
                 "rank": int(rule["rank"]),
             })
-    return [row_matches[0] if row_matches else None for row_matches in matches]
+    return matches
 
 
 def fit_latest_forecasts(
@@ -1290,6 +1298,7 @@ def fit_latest_forecasts(
     max_future_days: int | None = None,
     policy_history: pd.DataFrame | None = None,
     preferred_models: Sequence[str] | None = None,
+    pattern_adjuster: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     labeled = frame[frame["target"].notna()].copy()
     if labeled.empty:
@@ -1359,6 +1368,8 @@ def fit_latest_forecasts(
 
     training_registry = build_pattern_registry(train)
     final_registry = build_pattern_registry(development)
+    if pattern_adjuster is not None:
+        final_registry = pattern_adjuster(final_registry)
     pattern_calibration = pattern_probabilities(calibration, training_registry)
     pattern_future = pattern_probabilities(future, final_registry)
     pattern_rows = _decision_rows(
@@ -1420,7 +1431,7 @@ def fit_latest_forecasts(
     policy_mode, sideway_penalty, _ = select_decision_policy(
         policy_probabilities, policy_returns, matrix, policy_dates,
     )
-    matching_patterns = _matching_patterns(future, final_registry)
+    matching_pattern_sets = _matching_pattern_sets(future, final_registry)
     monthly_abstentions: defaultdict[str, int] = defaultdict(int)
     forecast_rows: list[dict[str, object]] = []
     finite_volatility = development["volatility_7"].dropna()
@@ -1453,7 +1464,9 @@ def fit_latest_forecasts(
             "expected_score": expected_score,
             "decision_margin": margin,
             "entropy": entropy,
-            "top_pattern": matching_patterns[row_index],
+            "top_pattern": matching_pattern_sets[row_index][0] if matching_pattern_sets[row_index] else None,
+            # Only the next publishable session needs complete live-learning provenance.
+            "matching_patterns": matching_pattern_sets[row_index] if row_index == 0 else [],
             "similar_cases": analog_details[row_index],
             "model_members": [candidate.name for candidate in selected],
             "model_weights": [float(weight) for weight in weights],
@@ -1461,14 +1474,27 @@ def fit_latest_forecasts(
             "sideway_penalty": sideway_penalty,
             "sideway_cap_override": bool(sideway_overrides[row_index]),
         })
-    selection_rows = [{
-        "model": candidate.name,
-        "lane": lane,
-        "calibration_score": candidate.calibration_score,
-        "calibration_log_loss": candidate.calibration_log_loss,
-        "weight": float(weights[selected.index(candidate)]) if candidate in selected else 0.0,
-        "status": "active" if candidate in selected else "standby",
-    } for candidate in candidates]
+    selected_weights = {candidate.name: float(weight) for candidate, weight in zip(selected, weights)}
+    selection_rows: list[dict[str, object]] = []
+    for candidate in candidates:
+        next_probability = candidate.test_probabilities[0]
+        next_direction, next_expected_score, next_margin = choose_direction(
+            next_probability, matrix, policy_mode, sideway_penalty,
+        )
+        selection_rows.append({
+            "model": candidate.name,
+            "lane": lane,
+            "calibration_score": candidate.calibration_score,
+            "calibration_log_loss": candidate.calibration_log_loss,
+            "weight": selected_weights.get(candidate.name, 0.0),
+            "status": "active" if candidate.name in selected_weights else "standby",
+            "next_forecast": next_direction,
+            "next_prob_down": float(next_probability[0]),
+            "next_prob_sideway": float(next_probability[1]),
+            "next_prob_up": float(next_probability[2]),
+            "next_expected_score": next_expected_score,
+            "next_decision_margin": next_margin,
+        })
     return pd.DataFrame(forecast_rows), pd.DataFrame(selection_rows), final_registry
 
 

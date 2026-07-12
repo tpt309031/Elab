@@ -58,6 +58,16 @@ export interface ForecastRow {
   sideway_cap_override?: boolean;
 }
 
+export interface OfficialForecastRow extends ForecastRow {
+  forecast_id: string;
+  target_date: string;
+  issued_at: string;
+  closed_through_at_issue: string;
+  actual_return: number | null;
+  evaluated_at: string | null;
+  immutable_digest?: string;
+}
+
 export interface ModelMetric {
   lane: string;
   rank: number;
@@ -78,6 +88,14 @@ export interface ModelMetric {
   net_return: number;
   rank_score: number;
   status: "active" | "standby";
+  live_samples?: number;
+  live_weighted_accuracy?: number | null;
+  live_directional_accuracy?: number | null;
+  live_expectancy?: number | null;
+  adjusted_weighted_accuracy?: number;
+  adaptive_rank_score?: number;
+  selection_change?: "promoted" | "demoted" | "retained" | "standby";
+  replacement_reason?: string;
 }
 
 export interface PatternMetric {
@@ -92,6 +110,25 @@ export interface PatternMetric {
   examples: string[];
   rank: number;
   status: "active" | "standby";
+  live_occurrences?: number;
+  live_weighted_accuracy?: number | null;
+  adjusted_weighted_accuracy?: number;
+  adaptive_rank_score?: number;
+  selection_change?: "promoted" | "demoted" | "retained" | "standby";
+  replacement_reason?: string;
+}
+
+export interface LearningSummary {
+  official_forecasts: number;
+  evaluated_forecasts: number;
+  pending_forecasts: number;
+  no_calls: number;
+  correct: number;
+  partial: number;
+  wrong: number;
+  live_weighted_accuracy: number | null;
+  last_evaluated_date: string | null;
+  last_selection_date: string | null;
 }
 
 export interface EquityPoint {
@@ -139,7 +176,7 @@ export interface ResearchArtifact {
     deep_research_enabled: boolean;
     scoring: Record<string, string>;
     availability_assumption: string;
-    validation: Record<string, string | number>;
+    validation: Record<string, string | number | boolean>;
   };
   market: MarketRow[];
   indices: IndexRow[];
@@ -159,8 +196,8 @@ export interface ResearchArtifact {
   };
   models: {
     availability: Array<{ model: string; family: string; available: boolean; cadence: string }>;
-    calendar_latest_selection: Array<Record<string, string | number>>;
-    full_hybrid_latest_selection: Array<Record<string, string | number>>;
+    calendar_latest_selection: Array<Record<string, string | number | boolean | null>>;
+    full_hybrid_latest_selection: Array<Record<string, string | number | boolean | null>>;
   };
   patterns: {
     calendar: PatternMetric[];
@@ -174,6 +211,13 @@ export interface ResearchArtifact {
   research: {
     correlation_heatmap: Array<Record<string, string | number | null>>;
     feature_groups: Record<string, string[]>;
+  };
+  learning?: {
+    summary: LearningSummary;
+    official_forecast_ledger: OfficialForecastRow[];
+    selection_history: Array<Record<string, unknown>>;
+    evaluated_this_run: number;
+    bootstrapped_this_run: number;
   };
 }
 

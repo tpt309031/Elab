@@ -73,7 +73,12 @@ export function DashboardShell() {
   const latestMarket = live.data?.rows.at(-1) ?? marketWithLive.at(-1);
   const priorDaily = data?.market.at(-1);
   const liveMove = latestMarket && priorDaily ? latestMarket.close / priorDaily.close - 1 : null;
-  const nextFull = data?.forecast.full_hybrid_next_session.find((row) => row.forecast !== "no-call") ?? data?.forecast.full_hybrid_next_session[0];
+  const officialNextFull = (data?.learning?.official_forecast_ledger ?? [])
+    .filter((row) => row.lane === "Full Hybrid" && row.date > latestClosed)
+    .sort((left, right) => left.date.localeCompare(right.date))[0];
+  const nextFull = officialNextFull
+    ?? data?.forecast.full_hybrid_next_session.find((row) => row.forecast !== "no-call")
+    ?? data?.forecast.full_hybrid_next_session[0];
   const bestModel = data?.performance.model_rankings.find((row) => row.lane === "Full Hybrid" && row.status === "active");
   const years = useMemo(() => data ? [...new Set(data.indices.map((row) => row.date.slice(0, 4)))].sort() : [], [data]);
   const chartWindow = useMemo(() => {
@@ -88,10 +93,14 @@ export function DashboardShell() {
     const endText = boundedEnd.toISOString().slice(0, 10);
     const historical = data.forecast.historical_full_hybrid_oos;
     const future = data.forecast.full_hybrid_next_session;
+    const official = (data.learning?.official_forecast_ledger ?? [])
+      .filter((row) => row.lane === "Full Hybrid")
+      .map((row) => ({ ...row, daily_return: row.actual_return }));
+    const forecastMap = new Map([...historical, ...future, ...official].map((row) => [row.date, row]));
     return {
       market: marketWithLive.filter((row) => row.timestamp >= startText && row.timestamp <= endText),
       indices: showIndices ? data.indices.filter((row) => row.date >= startText && row.date <= endText) : [],
-      forecasts: showForecasts ? [...historical, ...future].filter((row) => row.date >= startText && row.date <= endText) : [],
+      forecasts: showForecasts ? [...forecastMap.values()].filter((row) => row.date >= startText && row.date <= endText) : [],
     };
   }, [anchorMonth, anchorYear, data, latestClosed, marketWithLive, showForecasts, showIndices, windowMonths]);
 

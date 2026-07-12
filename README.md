@@ -47,6 +47,18 @@ rebuilds the pattern registry and future calls, then commits the new artifact.
 The calibrated policy keeps at most 8 SIDEWAY calls and 6 NO CALL decisions per
 calendar month; weaker SIDEWAY utilities are reassigned to the stronger UP/DOWN
 alternative before OOS scoring and future publication.
+
+`data/learning_state.json` is the immutable production ledger. A published
+lane/date forecast is never replaced; only its realized return, grade, and
+evaluation timestamp are added after the candle is closed. Candidate-model and
+matched-pattern predictions are stored with the official call, then used as
+live Bayesian evidence on top of walk-forward OOS priors. Each daily run records
+the active/standby selection snapshot, promotes higher adaptive ranks, demotes
+weaker candidates, and runs `research/verify_artifact.py` before committing.
+Every active pattern that fires for the published session is graded, while a
+SHA-256 digest protects the immutable forecast fields from accidental rewrites.
+The dashboard overlays this official ledger on regenerated OOS rows so the call
+shown to the user is always the call that was actually issued.
 The Sunday run enables the gated LSTM and Transformer candidates. Models enter
 the active set only after independent OOS ranking; failed candidates remain in
 standby and old forecasts stay in the historical ledger.
