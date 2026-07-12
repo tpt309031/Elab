@@ -70,8 +70,8 @@ export function ForecastCalendar({ month, rows, selectedDate, onMonthChange, onS
           {move == null ? "—" : `${move > 0 ? "+" : ""}${(move * 100).toFixed(1)}%`}
         </strong>
         <span className="flex min-w-0 flex-col font-mono text-[7px] uppercase leading-tight text-white/80 sm:text-[9px]">
-          <b className="truncate font-medium">{row?.forecast ?? "NO CALL"}</b>
-          <span className="truncate">{row?.status ?? "—"}</span>
+          <b className="truncate font-medium">{row?.forecast ?? "NO FORECAST"}</b>
+          <span className="truncate">{row?.status ?? "NOT AVAILABLE"}</span>
         </span>
       </button>
     );

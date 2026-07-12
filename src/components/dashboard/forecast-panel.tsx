@@ -22,6 +22,14 @@ function mergeForecastRows(history: ForecastRow[], future: ForecastRow[]): Forec
   return [...rows.values()].sort((left, right) => left.date.localeCompare(right.date));
 }
 
+function buildFusionFutureRows(calendar: ForecastRow[], fullHybrid: ForecastRow[]): ForecastRow[] {
+  const rows = new Map<string, ForecastRow>(
+    calendar.map((row) => [row.date, { ...row, lane: "Fusion ex-ante" }]),
+  );
+  for (const row of fullHybrid) rows.set(row.date, row);
+  return [...rows.values()].sort((left, right) => left.date.localeCompare(right.date));
+}
+
 export function ForecastPanel({ data }: ForecastPanelProps) {
   const initialMonth = data.meta.latest_closed_utc.slice(0, 7);
   const [lane, setLane] = useState<"calendar" | "full">("full");
@@ -30,7 +38,10 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
   const [selected, setSelected] = useState<ForecastRow>();
   const laneRows = useMemo(() => lane === "calendar"
     ? mergeForecastRows(data.forecast.historical_calendar_oos, data.forecast.calendar)
-    : mergeForecastRows(data.forecast.historical_full_hybrid_oos, data.forecast.full_hybrid_next_session), [data, lane]);
+    : mergeForecastRows(
+      data.forecast.historical_full_hybrid_oos,
+      buildFusionFutureRows(data.forecast.calendar, data.forecast.full_hybrid_next_session),
+    ), [data, lane]);
   const filtered = useMemo(() => laneRows.filter((row) => row.date.startsWith(month) && (direction === "all" || row.forecast === direction)), [direction, laneRows, month]);
   const years = useMemo(() => [...new Set(laneRows.map((row) => row.date.slice(0, 4)))].sort(), [laneRows]);
   const selectedYear = month.slice(0, 4);
@@ -42,8 +53,8 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
       <div className="flex flex-col gap-3 border border-border bg-card p-3 lg:flex-row lg:items-center lg:justify-between">
         <Tabs value={lane} onValueChange={(value) => setLane(value as "calendar" | "full")}>
           <TabsList>
-            <TabsTrigger value="full">Full Hybrid</TabsTrigger>
-            <TabsTrigger value="calendar">Ex-ante Calendar</TabsTrigger>
+            <TabsTrigger value="full">Fusion Forecast</TabsTrigger>
+            <TabsTrigger value="calendar">Index + Astro</TabsTrigger>
           </TabsList>
         </Tabs>
         <div className="grid grid-cols-3 gap-2 sm:flex">
@@ -61,6 +72,7 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
           </Select>
         </div>
       </div>
+      {lane === "full" && <p className="border-l-2 border-primary bg-primary/5 px-3 py-2 text-xs text-muted-foreground">The next UTC session uses Full Hybrid. Later sessions use leakage-safe Fusion ex-ante signals from Index + Astro because future OHLCV is not yet observable.</p>}
       <AccuracyBar rows={laneRows} />
       <ForecastCalendar month={month} rows={filtered} selectedDate={selected?.date} onMonthChange={setMonth} onSelect={setSelected} />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
@@ -74,6 +86,7 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="outline">{formatDate(selected.date)}</Badge>
+                  <Badge variant="outline">{selected.lane ?? (lane === "full" ? "Full Hybrid" : "Index + Astro")}</Badge>
                   <Badge className="uppercase">{selected.forecast}</Badge>
                   <Badge variant={selected.status === "wrong" ? "destructive" : "secondary"}>{selected.status}</Badge>
                   {selected.sideway_cap_override && <Badge variant="outline">SIDEWAY cap override</Badge>}
