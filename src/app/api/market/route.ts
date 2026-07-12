@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 type IntervalKey = "5m" | "1h" | "4h" | "1d";
 
 const intervals: Record<IntervalKey, { binance: string; okx: string; milliseconds: number; limit: number }> = {
@@ -39,7 +42,7 @@ async function fromBinance(timeframe: IntervalKey): Promise<NormalizedMarketRow[
   url.searchParams.set("limit", String(config.limit));
   const response = await fetch(url, {
     headers: { "user-agent": "elab-market-monitor/2.0" },
-    next: { revalidate: 300 },
+    cache: "no-store",
   });
   if (!response.ok) throw new Error(`Binance ${response.status}`);
   const payload = (await response.json()) as unknown[][];
@@ -55,13 +58,13 @@ async function fromBinance(timeframe: IntervalKey): Promise<NormalizedMarketRow[
 
 async function fromOkx(timeframe: IntervalKey): Promise<NormalizedMarketRow[]> {
   const config = intervals[timeframe];
-  const url = new URL("https://www.okx.com/api/v5/market/history-candles");
+  const url = new URL("https://www.okx.com/api/v5/market/candles");
   url.searchParams.set("instId", "BTC-USDT");
   url.searchParams.set("bar", config.okx);
   url.searchParams.set("limit", String(Math.min(config.limit, 300)));
   const response = await fetch(url, {
     headers: { "user-agent": "elab-market-monitor/2.0" },
-    next: { revalidate: 300 },
+    cache: "no-store",
   });
   if (!response.ok) throw new Error(`OKX ${response.status}`);
   const payload = (await response.json()) as { data?: string[][] };
@@ -85,14 +88,14 @@ export async function GET(request: NextRequest) {
     const rows = await fromBinance(timeframe);
     return NextResponse.json(
       { provider: "Binance", timeframe, rows, fetchedAt: new Date().toISOString() },
-      { headers: { "Cache-Control": "s-maxage=300, stale-while-revalidate=60" } },
+      { headers: { "Cache-Control": "no-store, max-age=0" } },
     );
   } catch (binanceError) {
     try {
       const rows = await fromOkx(timeframe);
       return NextResponse.json(
         { provider: "OKX", timeframe, rows, fetchedAt: new Date().toISOString() },
-        { headers: { "Cache-Control": "s-maxage=300, stale-while-revalidate=60" } },
+        { headers: { "Cache-Control": "no-store, max-age=0" } },
       );
     } catch (okxError) {
       return NextResponse.json(
