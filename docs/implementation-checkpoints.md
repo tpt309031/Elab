@@ -46,7 +46,7 @@ Baseline as of July 13, 2026:
 
 ## Checkpoint 1: Data Provenance and Feature Foundation
 
-Status: pending
+Status: complete
 
 Files owned by this checkpoint:
 

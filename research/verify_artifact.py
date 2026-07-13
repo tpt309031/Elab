@@ -34,6 +34,18 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
         raise AssertionError(
             f"market artifact is stale: latest={latest_closed:%Y-%m-%d}, expected={expected_closed:%Y-%m-%d}",
         )
+    if int(meta.get("schema_version", 0)) >= 4:
+        health = artifact.get("health", {})
+        market_health = health.get("market", {}) if isinstance(health, dict) else {}
+        if not isinstance(market_health, dict) or bool(market_health.get("stale", True)):
+            raise AssertionError("schema v4 artifact must contain a non-stale market health record")
+        if str(market_health.get("actual_closed_utc")) != latest_closed.strftime("%Y-%m-%d"):
+            raise AssertionError("market health actual date must match artifact latest closed date")
+        lineage = meta.get("data_lineage", [])
+        if not isinstance(lineage, list) or len(lineage) < 4:
+            raise AssertionError("schema v4 artifact must contain source lineage")
+        if any(not isinstance(item, dict) or not item.get("sha256") for item in lineage):
+            raise AssertionError("every lineage source must include a SHA-256 digest")
     forecasts = state.get("forecasts", [])
     if not isinstance(forecasts, list):
         raise AssertionError("learning forecasts must be a list")

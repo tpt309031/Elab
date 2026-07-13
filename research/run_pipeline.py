@@ -27,6 +27,12 @@ from research.hybrid_core import (
     serialize_frame,
     utc_now,
 )
+from research.data_sources import (
+    build_intraday_daily_features,
+    load_external_features,
+    refresh_intraday_market,
+    source_lineage,
+)
 from research.learning import (
     append_official_forecast,
     apply_live_model_ranking,
@@ -158,20 +164,71 @@ def main() -> None:
     learning_state_path = ROOT / "data" / "learning_state.json"
     learning_state = load_learning_state(learning_state_path)
     bootstrapped_forecasts = _bootstrap_published_forecasts(learning_state, previous_payload)
-    indices = load_indices(
-        ROOT / "data" / "newdata" / "index_btc.csv",
-        ROOT / "data" / "newdata" / "index_me.csv",
-    )
-    astro = load_astro(ROOT / "public" / "data" / "astro_scores.json")
+    index_btc_path = ROOT / "data" / "newdata" / "index_btc.csv"
+    index_me_path = ROOT / "data" / "newdata" / "index_me.csv"
+    astro_path = ROOT / "public" / "data" / "astro_scores.json"
+    indices = load_indices(index_btc_path, index_me_path)
+    astro = load_astro(astro_path)
     cache_path = ROOT / "data" / "cache" / "BTCUSDT_1d.csv"
     if args.no_refresh:
         market = pd.read_csv(cache_path, parse_dates=["timestamp"])
         provider = "committed cache"
+        expected_closed = utc_now().tz_localize(None).normalize() - pd.Timedelta(days=1)
+        cached_latest = pd.to_datetime(market["timestamp"]).max().normalize()
+        market_health = {
+            "status": "healthy" if cached_latest >= expected_closed else "stale",
+            "expected_closed_utc": expected_closed.strftime("%Y-%m-%d"),
+            "actual_closed_utc": cached_latest.strftime("%Y-%m-%d"),
+            "cache_latest_before_refresh": cached_latest.strftime("%Y-%m-%d"),
+            "selected_provider": provider,
+            "provider_count": 0,
+            "cross_exchange_close_discrepancy_bps": None,
+            "stale": bool(cached_latest < expected_closed),
+            "attempts": [],
+        }
     else:
-        market, provider = refresh_daily_market(cache_path)
+        market, provider, market_health = refresh_daily_market(cache_path, include_health=True)
+    intraday_frames: list[tuple[str, pd.DataFrame]] = []
+    intraday_health: list[dict[str, object]] = []
+    intraday_paths: dict[str, Path] = {}
+    for timeframe in ("1h", "4h"):
+        intraday_path = ROOT / "data" / "cache" / f"BTCUSDT_{timeframe}.csv"
+        intraday_paths[timeframe] = intraday_path
+        try:
+            if args.no_refresh:
+                intraday_frame = pd.read_csv(intraday_path, parse_dates=["timestamp"])
+                latest_bar = pd.to_datetime(intraday_frame["timestamp"]).max()
+                health = {
+                    "timeframe": timeframe,
+                    "status": "committed-cache",
+                    "provider": "committed cache",
+                    "expected_open_utc": None,
+                    "actual_open_utc": latest_bar.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "stale": None,
+                    "rows": int(len(intraday_frame)),
+                    "attempts": [],
+                }
+            else:
+                intraday_frame, health = refresh_intraday_market(intraday_path, timeframe)
+            intraday_frames.append((timeframe, intraday_frame))
+            intraday_health.append(health)
+        except Exception as exc:
+            intraday_health.append({
+                "timeframe": timeframe,
+                "status": "unavailable",
+                "provider": None,
+                "expected_open_utc": None,
+                "actual_open_utc": None,
+                "stale": True,
+                "rows": 0,
+                "attempts": [],
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+    intraday_features = build_intraday_daily_features(intraday_frames)
+    external, external_health, external_lineage = load_external_features(ROOT / "data" / "external")
     latest_closed = pd.to_datetime(market["timestamp"]).max().normalize()
     evaluated_forecasts = grade_learning_state(learning_state, market, latest_closed, run_at)
-    frame, groups = build_feature_frame(indices, market, astro)
+    frame, groups = build_feature_frame(indices, market, astro, intraday_features, external)
     analog_columns = [
         "index_BTC", "index_me", "gap_index", "index_btc_change_1", "index_me_change_1",
         "index_btc_slope_3", "index_me_slope_3", "index_corr_5", "composite", "finance",
@@ -278,12 +335,58 @@ def main() -> None:
         calendar.feature_importance.get("method", pd.Series(dtype=str)).dropna().astype(str).tolist()
         + full.feature_importance.get("method", pd.Series(dtype=str)).dropna().astype(str).tolist()
     ))
+    data_lineage = [
+        source_lineage(
+            index_btc_path,
+            "private-index-btc",
+            len(indices),
+            indices["date"].min(),
+            indices["date"].max(),
+            int((~indices["index_BTC_availability_imputed"]).sum()),
+        ),
+        source_lineage(
+            index_me_path,
+            "private-index-me",
+            len(indices),
+            indices["date"].min(),
+            indices["date"].max(),
+            int((~indices["index_me_availability_imputed"]).sum()),
+        ),
+        source_lineage(
+            astro_path,
+            "astro-scores",
+            len(astro),
+            astro["date"].min(),
+            astro["date"].max(),
+            int((~astro["astro_availability_imputed"]).sum()),
+        ),
+        source_lineage(
+            cache_path,
+            f"btc-daily-{provider}",
+            len(market),
+            market["timestamp"].min(),
+            market["timestamp"].max(),
+        ),
+    ]
+    for timeframe, intraday_frame in intraday_frames:
+        path = intraday_paths[timeframe]
+        if path.exists():
+            data_lineage.append(source_lineage(
+                path,
+                f"btc-{timeframe}",
+                len(intraday_frame),
+                intraday_frame["timestamp"].min(),
+                intraday_frame["timestamp"].max(),
+            ))
+    data_lineage.extend(external_lineage)
+    forecast_cutoff = (latest_closed + pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
     payload = {
         "meta": {
-            "schema_version": 3,
+            "schema_version": 4,
             "generated_at": run_at,
             "market_provider": provider,
             "latest_closed_utc": latest_closed.strftime("%Y-%m-%d"),
+            "forecast_cutoff_utc": forecast_cutoff,
             "oos_start": OOS_START.strftime("%Y-%m-%d"),
             "oos_end": latest_closed.strftime("%Y-%m-%d"),
             "index_start": indices["date"].min().strftime("%Y-%m-%d"),
@@ -297,7 +400,8 @@ def main() -> None:
                 "down": "correct <= -3%; partial > -3% to -0.1%; wrong >= 0%",
                 "sideway": "correct within -1% to +1%; otherwise wrong; no partial",
             },
-            "availability_assumption": "Index and Astro values for a forecast date are known before that UTC session. Market features are shifted and use only prior closed candles.",
+            "availability_assumption": "Explicit available_at timestamps are enforced before the target UTC session. Sources without timestamps are marked prepublished-imputed; market and intraday features use only prior closed bars.",
+            "data_lineage": data_lineage,
             "validation": {
                 "outer": "monthly rolling walk-forward",
                 "rolling_train_days": 1460,
@@ -308,6 +412,16 @@ def main() -> None:
                 "transaction_cost_bps": 5,
                 "daily_evaluation_utc": "03:20",
                 "official_forecasts_are_immutable": True,
+            },
+        },
+        "health": {
+            "market": market_health,
+            "intraday": intraday_health,
+            "external": external_health,
+            "last_evaluation": {
+                "latest_closed_utc": latest_closed.strftime("%Y-%m-%d"),
+                "evaluated_forecasts_this_run": int(evaluated_forecasts),
+                "run_at": run_at,
             },
         },
         "market": _compact_ohlcv(market),

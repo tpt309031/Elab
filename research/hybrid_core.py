@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 import urllib.parse
 import urllib.request
 from collections import defaultdict
@@ -21,6 +22,8 @@ from sklearn.metrics import balanced_accuracy_score, log_loss
 from sklearn.neighbors import NearestNeighbors
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+
+from research.data_sources import PREPUBLISHED_AT, availability_series
 
 
 CLASS_NAMES = ("down", "sideway", "up")
@@ -245,7 +248,8 @@ def refresh_daily_market(
     cache_path: str | Path,
     start: str = "2017-08-17",
     now: pd.Timestamp | None = None,
-) -> tuple[pd.DataFrame, str]:
+    include_health: bool = False,
+) -> tuple[pd.DataFrame, str] | tuple[pd.DataFrame, str, dict[str, object]]:
     cache_path = Path(cache_path)
     cached = pd.read_csv(cache_path, parse_dates=["timestamp"]) if cache_path.exists() else pd.DataFrame()
     requested_start = pd.Timestamp(start)
@@ -263,12 +267,15 @@ def refresh_daily_market(
     provider = "cache-current"
     fresh = pd.DataFrame()
     errors: list[str] = []
+    attempts: list[dict[str, object]] = []
+    valid_sources: list[tuple[str, pd.DataFrame]] = []
     providers = (
         ("Binance", _fetch_binance_daily),
         ("OKX", _fetch_okx_daily),
         ("Coinbase", _fetch_coinbase_daily),
     )
     for provider_name, fetcher in providers:
+        started = time.perf_counter()
         try:
             candidate = _prepare_daily_market(
                 fetcher(fetch_start, closed_end + pd.Timedelta(days=1)), closed_end,
@@ -278,13 +285,33 @@ def refresh_daily_market(
                 raise RuntimeError(
                     f"latest candle {candidate_latest:%Y-%m-%d}, expected {closed_end:%Y-%m-%d}",
                 )
-            fresh = candidate
-            provider = provider_name
+            valid_sources.append((provider_name, candidate))
+            if fresh.empty:
+                fresh = candidate
+                provider = provider_name
+            latest_close = float(candidate.loc[candidate["timestamp"] == candidate_latest, "close"].iloc[-1])
+            attempts.append({
+                "provider": provider_name,
+                "status": "healthy",
+                "latest_closed_utc": candidate_latest.strftime("%Y-%m-%d"),
+                "latest_close": latest_close,
+                "latency_ms": int((time.perf_counter() - started) * 1000),
+                "error": None,
+            })
             print(f"[market] {provider_name} supplied closed candle {closed_end:%Y-%m-%d}")
-            break
+            if not include_health:
+                break
         except Exception as exc:
             message = f"{provider_name}: {type(exc).__name__}: {exc}"
             errors.append(message)
+            attempts.append({
+                "provider": provider_name,
+                "status": "failed",
+                "latest_closed_utc": None,
+                "latest_close": None,
+                "latency_ms": int((time.perf_counter() - started) * 1000),
+                "error": f"{type(exc).__name__}: {exc}",
+            })
             print(f"[market] provider failed: {message}")
     if fresh.empty and (cached_latest is None or cached_latest < closed_end):
         detail = " | ".join(errors) or "no providers attempted"
@@ -302,7 +329,31 @@ def refresh_daily_market(
     temporary.unlink(missing_ok=True)
     combined.to_csv(temporary, index=False)
     temporary.replace(cache_path)
-    return combined, provider
+    if not include_health:
+        return combined, provider
+    source_closes = [
+        float(candidate.loc[candidate["timestamp"] == closed_end, "close"].iloc[-1])
+        for _, candidate in valid_sources
+        if (candidate["timestamp"] == closed_end).any()
+    ]
+    median_close = float(np.median(source_closes)) if source_closes else math.nan
+    discrepancy_bps = (
+        float((max(source_closes) - min(source_closes)) / median_close * 10_000)
+        if len(source_closes) > 1 and median_close > 0 else None
+    )
+    degraded = provider == "cache-current" or bool(errors)
+    health: dict[str, object] = {
+        "status": "degraded" if degraded else "healthy",
+        "expected_closed_utc": closed_end.strftime("%Y-%m-%d"),
+        "actual_closed_utc": latest_closed.strftime("%Y-%m-%d"),
+        "cache_latest_before_refresh": cached_latest.strftime("%Y-%m-%d") if cached_latest is not None else None,
+        "selected_provider": provider,
+        "provider_count": len(valid_sources),
+        "cross_exchange_close_discrepancy_bps": discrepancy_bps,
+        "stale": bool(latest_closed < closed_end),
+        "attempts": attempts,
+    }
+    return combined, provider, health
 
 
 def load_indices(index_btc_path: str | Path, index_me_path: str | Path) -> pd.DataFrame:
@@ -312,10 +363,24 @@ def load_indices(index_btc_path: str | Path, index_me_path: str | Path) -> pd.Da
     trader = trader.rename(columns={"score_percent": "index_me"})
     for frame in (btc, trader):
         frame["date"] = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
-    merged = btc[["date", "index_BTC"]].merge(trader[["date", "index_me"]], on="date", how="outer")
+    btc_available, btc_imputed = availability_series(btc)
+    trader_available, trader_imputed = availability_series(trader)
+    btc["index_BTC_available_at"] = btc_available
+    btc["index_BTC_availability_imputed"] = btc_imputed
+    trader["index_me_available_at"] = trader_available
+    trader["index_me_availability_imputed"] = trader_imputed
+    merged = btc[[
+        "date", "index_BTC", "index_BTC_available_at", "index_BTC_availability_imputed",
+    ]].merge(trader[[
+        "date", "index_me", "index_me_available_at", "index_me_availability_imputed",
+    ]], on="date", how="outer")
     merged = merged.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
     for column in ("index_BTC", "index_me"):
         merged[column] = pd.to_numeric(merged[column], errors="coerce").clip(0, 100)
+    for column in ("index_BTC_available_at", "index_me_available_at"):
+        merged[column] = pd.to_datetime(merged[column], errors="coerce").fillna(PREPUBLISHED_AT)
+    for column in ("index_BTC_availability_imputed", "index_me_availability_imputed"):
+        merged[column] = merged[column].fillna(True).astype(bool)
     return merged
 
 
@@ -326,6 +391,9 @@ def load_astro(path: str | Path) -> pd.DataFrame:
     frame["date"] = pd.to_datetime(frame["date"], errors="raise").dt.normalize()
     for column in ("finance", "career", "volatility", "composite"):
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    available_at, availability_imputed = availability_series(frame)
+    frame["astro_available_at"] = available_at
+    frame["astro_availability_imputed"] = availability_imputed
     frame["event"] = frame.get("event", False).fillna(False).astype(bool)
     frame["regime"] = frame.get("regime", "normal").fillna("normal").astype(str)
     return frame.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
@@ -371,7 +439,13 @@ def _atr(market: pd.DataFrame, period: int = 14) -> pd.Series:
     return true_range.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
 
 
-def build_feature_frame(indices: pd.DataFrame, market: pd.DataFrame, astro: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, list[str]]]:
+def build_feature_frame(
+    indices: pd.DataFrame,
+    market: pd.DataFrame,
+    astro: pd.DataFrame,
+    intraday: pd.DataFrame | None = None,
+    external: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, dict[str, list[str]]]:
     market = market.copy().sort_values("timestamp")
     market["date"] = pd.to_datetime(market["timestamp"]).dt.normalize()
     market["daily_return"] = market["close"] / market["open"] - 1
@@ -404,9 +478,58 @@ def build_feature_frame(indices: pd.DataFrame, market: pd.DataFrame, astro: pd.D
     frame = astro.copy()
     frame = frame.merge(indices, on="date", how="outer")
     frame = frame.merge(market_features, on="date", how="outer").sort_values("date").reset_index(drop=True)
+    for availability_column, imputed_column in (
+        ("index_BTC_available_at", "index_BTC_availability_imputed"),
+        ("index_me_available_at", "index_me_availability_imputed"),
+        ("astro_available_at", "astro_availability_imputed"),
+    ):
+        if availability_column not in frame:
+            frame[availability_column] = PREPUBLISHED_AT
+        if imputed_column not in frame:
+            frame[imputed_column] = True
+    intraday_columns: list[str] = []
+    if intraday is not None and not intraday.empty:
+        intraday_frame = intraday.copy()
+        intraday_frame["date"] = pd.to_datetime(intraday_frame["date"]).dt.normalize()
+        intraday_columns = [column for column in intraday_frame if column != "date"]
+        frame = frame.merge(intraday_frame, on="date", how="outer").sort_values("date").reset_index(drop=True)
+        # Intraday aggregates from UTC day D become available to the forecast for D+1.
+        frame[intraday_columns] = frame[intraday_columns].shift(1)
+        for column in [item for item in intraday_columns if "volume_" in item and "signed" not in item]:
+            frame[f"{column}_z20"] = _rolling_zscore(frame[column], 20)
+            intraday_columns.append(f"{column}_z20")
+    external_columns: list[str] = []
+    if external is not None and not external.empty:
+        external_frame = external.copy()
+        external_frame["date"] = pd.to_datetime(external_frame["date"]).dt.normalize()
+        external_columns = [column for column in external_frame if column != "date"]
+        frame = frame.merge(external_frame, on="date", how="outer").sort_values("date").reset_index(drop=True)
+        for column in list(external_columns):
+            frame[f"{column}_change_1"] = frame[column].diff()
+            frame[f"{column}_z30"] = _rolling_zscore(frame[column], 30)
+            external_columns.extend([f"{column}_change_1", f"{column}_z30"])
     frame = frame[(frame["date"] >= pd.Timestamp("2017-08-17"))].copy()
 
+    forecast_cutoff = frame["date"]
+    for value_column, availability_column, imputed_column in (
+        ("index_BTC", "index_BTC_available_at", "index_BTC_availability_imputed"),
+        ("index_me", "index_me_available_at", "index_me_availability_imputed"),
+    ):
+        if availability_column in frame:
+            explicit = ~frame[imputed_column].fillna(True).astype(bool)
+            unavailable = explicit & (pd.to_datetime(frame[availability_column]) > forecast_cutoff)
+            frame.loc[unavailable, value_column] = np.nan
+    if "astro_available_at" in frame:
+        explicit_astro = ~frame["astro_availability_imputed"].fillna(True).astype(bool)
+        unavailable_astro = explicit_astro & (pd.to_datetime(frame["astro_available_at"]) > forecast_cutoff)
+        frame.loc[unavailable_astro, ["finance", "career", "volatility", "composite"]] = np.nan
+        frame.loc[unavailable_astro, "event"] = False
+
     frame["index_available"] = frame[["index_BTC", "index_me"]].notna().all(axis=1).astype(float)
+    frame["index_availability_imputed"] = frame[[
+        "index_BTC_availability_imputed", "index_me_availability_imputed",
+    ]].fillna(True).any(axis=1).astype(float)
+    frame["astro_availability_imputed"] = frame["astro_availability_imputed"].fillna(True).astype(float)
     frame["index_btc_change_1"] = frame["index_BTC"].diff(1)
     frame["index_btc_change_3"] = frame["index_BTC"].diff(3)
     frame["index_btc_slope_3"] = _rolling_slope(frame["index_BTC"], 3)
@@ -463,9 +586,10 @@ def build_feature_frame(indices: pd.DataFrame, market: pd.DataFrame, astro: pd.D
     frame["doy_sin"] = np.sin(2 * np.pi * day_of_year / 365.25)
     frame["doy_cos"] = np.cos(2 * np.pi * day_of_year / 365.25)
     frame["target"] = frame["daily_return"].map(direction_label)
+    technical_columns = technical_columns + intraday_columns
 
     index_columns = [
-        "index_available", "index_BTC", "index_me", "index_btc_change_1", "index_btc_change_3",
+        "index_available", "index_availability_imputed", "index_BTC", "index_me", "index_btc_change_1", "index_btc_change_3",
         "index_btc_slope_3", "index_btc_slope_7", "index_btc_acceleration", "index_btc_z30",
         "index_me_change_1", "index_me_change_3", "index_me_slope_3", "index_me_slope_7",
         "index_me_acceleration", "index_me_z30", "gap_index", "gap_index_abs", "gap_index_change",
@@ -475,7 +599,7 @@ def build_feature_frame(indices: pd.DataFrame, market: pd.DataFrame, astro: pd.D
         "trader_extreme_low",
     ]
     astro_columns = [
-        "finance", "career", "volatility", "composite", "astro_finance_z30", "astro_volatility_z30",
+        "finance", "career", "volatility", "composite", "astro_availability_imputed", "astro_finance_z30", "astro_volatility_z30",
         "astro_composite_change_1", "astro_composite_slope_3", "astro_event", "astro_watch",
     ]
     interaction_columns = [
@@ -487,9 +611,10 @@ def build_feature_frame(indices: pd.DataFrame, market: pd.DataFrame, astro: pd.D
         "index": index_columns,
         "astro": astro_columns,
         "interaction": interaction_columns,
+        "external": external_columns,
     }
     groups["calendar"] = index_columns + astro_columns + interaction_columns
-    groups["full"] = technical_columns + index_columns + astro_columns + interaction_columns
+    groups["full"] = technical_columns + index_columns + astro_columns + interaction_columns + external_columns
     sequence_calendar_base = [
         "index_BTC", "index_me", "gap_index", "index_btc_change_1", "index_me_change_1",
         "index_btc_slope_3", "index_me_slope_3", "same_phase", "opposite_phase",
@@ -497,6 +622,12 @@ def build_feature_frame(indices: pd.DataFrame, market: pd.DataFrame, astro: pd.D
     ]
     sequence_full_base = sequence_calendar_base + [
         "market_return_1", "market_return_3", "volatility_7", "distance_ma20", "rsi14", "atr14_pct",
+    ]
+    sequence_full_base += [
+        column for column in (
+            "intraday_realized_vol_1h", "intraday_trend_1h", "intraday_signed_volume_1h",
+            "intraday_realized_vol_4h", "intraday_trend_4h", "intraday_signed_volume_4h",
+        ) if column in frame
     ]
     sequence_features = {
         f"sequence__{column}__lag_{lag}": frame[column].shift(lag)
@@ -1643,13 +1774,22 @@ def feature_heatmap(frame: pd.DataFrame, feature_groups: dict[str, list[str]]) -
     return correlation.reset_index().rename(columns={"index": "feature"})
 
 
-def serialize_frame(frame: pd.DataFrame, date_columns: Iterable[str] = ("date", "train_start", "train_end", "calibration_end", "test_start", "test_end", "last_seen")) -> list[dict[str, object]]:
+def serialize_frame(
+    frame: pd.DataFrame,
+    date_columns: Iterable[str] = (
+        "date", "train_start", "train_end", "calibration_end", "test_start", "test_end", "last_seen",
+        "index_BTC_available_at", "index_me_available_at", "astro_available_at", "available_at",
+    ),
+) -> list[dict[str, object]]:
     if frame is None or frame.empty:
         return []
     output = frame.copy()
     for column in date_columns:
         if column in output:
-            output[column] = pd.to_datetime(output[column], errors="coerce").dt.strftime("%Y-%m-%d")
+            parsed = pd.to_datetime(output[column], errors="coerce")
+            output[column] = parsed.dt.strftime(
+                "%Y-%m-%dT%H:%M:%SZ" if "available_at" in column else "%Y-%m-%d",
+            )
     records: list[dict[str, object]] = []
     for row in output.to_dict("records"):
         clean: dict[str, object] = {}

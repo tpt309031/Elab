@@ -77,7 +77,7 @@ jobs:
         run: |
           git config user.name "elab-research-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add data/cache/BTCUSDT_1d.csv data/hybrid_research.json data/learning_state.json public/data/hybrid_research.json
+          git add data/cache/BTCUSDT_1d.csv data/cache/BTCUSDT_1h.csv data/cache/BTCUSDT_4h.csv data/hybrid_research.json data/learning_state.json public/data/hybrid_research.json
           if git diff --cached --quiet; then
             echo "No closed-candle or research changes"
             exit 0
