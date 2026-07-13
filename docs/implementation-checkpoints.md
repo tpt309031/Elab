@@ -133,7 +133,7 @@ Acceptance gate:
 
 ## Checkpoint 4: Intraday Deep Challengers
 
-Status: pending
+Status: complete
 
 Files owned by this checkpoint:
 

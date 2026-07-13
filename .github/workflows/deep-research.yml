@@ -1,0 +1,63 @@
+name: Weekly deep challenger research
+
+on:
+  schedule:
+    - cron: "40 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      epochs:
+        description: "Chronological training epochs per architecture"
+        required: false
+        default: "12"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: weekly-deep-challenger-research
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: research/requirements-*.txt
+
+      - name: Install isolated deep dependencies
+        run: |
+          python -m pip install -r research/requirements-deep.txt
+          python -m pip install pytest
+
+      - name: Verify intraday cutoff and architecture contracts
+        run: python -m pytest tests/test_deep_dataset.py tests/test_models.py -q
+
+      - name: Train six chronological challengers
+        env:
+          DEEP_EPOCHS: ${{ inputs.epochs || '12' }}
+        run: python research/train_deep_challengers.py --epochs "$DEEP_EPOCHS" --folds 2
+
+      - name: Verify isolated deep artifact
+        run: python research/verify_deep_artifact.py
+
+      - name: Commit deep challenger artifact
+        shell: bash
+        run: |
+          git config user.name "elab-research-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/deep_research.json public/data/deep_research.json
+          if git diff --cached --quiet; then
+            echo "No deep challenger changes"
+            exit 0
+          fi
+          git commit -m "Refresh weekly deep challengers"
+          git push

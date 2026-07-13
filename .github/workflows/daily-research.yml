@@ -3,14 +3,7 @@ name: Daily hybrid research
 on:
   schedule:
     - cron: "20 3 * * *"
-    - cron: "40 4 * * 0"
   workflow_dispatch:
-    inputs:
-      deep:
-        description: "Run gated LSTM and Transformer research"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -23,8 +16,6 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    env:
-      DEEP_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.deep) || github.event.schedule == '40 4 * * 0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,13 +28,8 @@ jobs:
           cache-dependency-path: research/requirements-*.txt
 
       - name: Install research dependencies
-        shell: bash
         run: |
-          if [[ "$DEEP_RUN" == "true" ]]; then
-            python -m pip install -r research/requirements-deep.txt
-          else
-            python -m pip install -r research/requirements-core.txt
-          fi
+          python -m pip install -r research/requirements-core.txt
           python -m pip install pytest
 
       - name: Verify leakage, scoring, and learning invariants
@@ -52,14 +38,9 @@ jobs:
       - name: Refresh market and walk-forward artifacts
         shell: bash
         run: |
-          if [[ "$DEEP_RUN" == "true" ]]; then
-            RUN=(python research/run_pipeline.py --deep)
-          else
-            RUN=(python research/run_pipeline.py)
-          fi
           for attempt in 1 2 3; do
             echo "Research refresh attempt ${attempt}/3"
-            if "${RUN[@]}"; then
+            if python research/run_pipeline.py; then
               exit 0
             fi
             if [[ "$attempt" == "3" ]]; then
