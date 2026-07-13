@@ -197,7 +197,7 @@ Acceptance gate:
 
 ## Checkpoint 6: Full Rebuild and Release
 
-Status: pending
+Status: complete
 
 Deliverables:
 
@@ -207,6 +207,17 @@ Deliverables:
 - Compare the new champion against the frozen baseline with confidence intervals.
 - Publish generated artifacts, push GitHub, wait for Vercel `READY`, inspect runtime errors, and verify production data freshness.
 - Record limitations honestly; the 70% target is a gate, not a value to manufacture.
+
+Release evidence on July 13, 2026:
+
+- Rebuilt 924 purged OOS sessions in each lane through the closed July 12 UTC candle.
+- Full Hybrid directional accuracy is 53.15%; the 70% research target was not reached.
+- All 12 available daily model families produced sufficient OOS histories; six deep architectures completed isolated challenger runs and none passed promotion gates.
+- `34` Python tests, artifact verification, ESLint, TypeScript, and the Next.js production build passed.
+- The immutable ledger contains six official forecasts: four evaluated and two pending. Daily and event ledgers remain independent.
+- Monthly capacity now carries locked calls across reruns and across the shared Calendar/Fusion horizon. The verifier rejects any new `SIDEWAY` or `NO CALL` beyond available capacity.
+- The already-issued July 13 Full Hybrid `SIDEWAY` call is immutable and leaves July one call above the new sideway cap; the policy adds no further July sideway calls rather than rewriting that record.
+- GitHub commit `2c6533e` deployed `READY` to `elab-drab.vercel.app`; production health was current, the mobile calendar had no horizontal overflow, and Vercel reported no runtime errors.
 
 ## Resume Procedure
 
