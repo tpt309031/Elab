@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
+
+import research.hybrid_core as hybrid_core
 
 from research.hybrid_core import (
     allocate_monthly_directions,
@@ -78,3 +81,66 @@ def test_monthly_folds_are_purged_and_chronological() -> None:
         test_start = frame.loc[fold.test_index, "date"].min()
         assert train_end < calibration_start
         assert calibration_end <= test_start - pd.Timedelta(days=5)
+
+
+def test_okx_string_millisecond_timestamp_is_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
+    timestamp = int(pd.Timestamp("2026-07-12", tz="UTC").timestamp() * 1000)
+    monkeypatch.setattr(hybrid_core, "_request_json", lambda _: {
+        "data": [[str(timestamp), "100", "105", "98", "102", "10", "0", "0", "1"]],
+    })
+    result = hybrid_core._fetch_okx_daily(pd.Timestamp("2026-07-12"), pd.Timestamp("2026-07-13"))
+    assert result.iloc[0]["timestamp"] == pd.Timestamp("2026-07-12")
+    assert result.iloc[0]["close"] == 102.0
+
+
+def test_stale_cache_fails_closed_when_all_providers_fail(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "BTCUSDT_1d.csv"
+    _market_rows(["2026-07-11"]).to_csv(cache, index=False)
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(hybrid_core, "_fetch_binance_daily", fail)
+    monkeypatch.setattr(hybrid_core, "_fetch_okx_daily", fail)
+    monkeypatch.setattr(hybrid_core, "_fetch_coinbase_daily", fail)
+    with pytest.raises(RuntimeError, match="Closed BTC candle 2026-07-12 is unavailable"):
+        hybrid_core.refresh_daily_market(cache, now=pd.Timestamp("2026-07-13 03:20:00", tz="UTC"))
+    persisted = pd.read_csv(cache)
+    assert persisted["timestamp"].iloc[-1] == "2026-07-11"
+    assert not cache.with_suffix(".csv.tmp").exists()
+
+
+def test_refresh_falls_back_and_requires_expected_closed_candle(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = tmp_path / "BTCUSDT_1d.csv"
+    _market_rows(["2026-07-11"]).to_csv(cache, index=False)
+
+    def fail_binance(*_args, **_kwargs):
+        raise RuntimeError("geo blocked")
+
+    monkeypatch.setattr(hybrid_core, "_fetch_binance_daily", fail_binance)
+    monkeypatch.setattr(hybrid_core, "_fetch_okx_daily", lambda *_: _market_rows(["2026-07-12"]))
+    monkeypatch.setattr(
+        hybrid_core,
+        "_fetch_coinbase_daily",
+        lambda *_: pytest.fail("Coinbase should not run after a valid OKX candle"),
+    )
+    result, provider = hybrid_core.refresh_daily_market(
+        cache, now=pd.Timestamp("2026-07-13 03:20:00", tz="UTC"),
+    )
+    assert provider == "OKX"
+    assert result["timestamp"].max() == pd.Timestamp("2026-07-12")
+
+
+def _market_rows(dates: list[str]) -> pd.DataFrame:
+    return pd.DataFrame({
+        "timestamp": pd.to_datetime(dates),
+        "open": 100.0,
+        "high": 105.0,
+        "low": 98.0,
+        "close": 102.0,
+        "volume": 10.0,
+    })

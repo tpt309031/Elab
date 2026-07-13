@@ -53,10 +53,21 @@ jobs:
         shell: bash
         run: |
           if [[ "$DEEP_RUN" == "true" ]]; then
-            python research/run_pipeline.py --deep
+            RUN=(python research/run_pipeline.py --deep)
           else
-            python research/run_pipeline.py
+            RUN=(python research/run_pipeline.py)
           fi
+          for attempt in 1 2 3; do
+            echo "Research refresh attempt ${attempt}/3"
+            if "${RUN[@]}"; then
+              exit 0
+            fi
+            if [[ "$attempt" == "3" ]]; then
+              echo "All market refresh attempts failed; refusing to publish a stale artifact"
+              exit 1
+            fi
+            sleep 120
+          done
 
       - name: Verify immutable ledger and adaptive selection
         run: python research/verify_artifact.py

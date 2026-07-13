@@ -105,7 +105,7 @@ def _request_json(url: str, timeout: int = 30) -> object:
         return json.loads(response.read().decode("utf-8"))
 
 
-def _fetch_binance_daily(start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+def _fetch_binance_daily_from_base(start: pd.Timestamp, end: pd.Timestamp, base_url: str) -> pd.DataFrame:
     rows: list[list[object]] = []
     cursor = int(start.timestamp() * 1000)
     end_ms = int(end.timestamp() * 1000)
@@ -118,7 +118,7 @@ def _fetch_binance_daily(start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame
             "endTime": end_ms,
             "limit": 1000,
         })
-        payload = _request_json(f"https://api.binance.com/api/v3/klines?{query}")
+        payload = _request_json(f"{base_url}/api/v3/klines?{query}")
         if not isinstance(payload, list) or not payload:
             break
         rows.extend(payload)
@@ -136,6 +136,21 @@ def _fetch_binance_daily(start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame
         "close": [float(row[4]) for row in rows],
         "volume": [float(row[5]) for row in rows],
     })
+
+
+def _fetch_binance_daily(start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    errors: list[str] = []
+    # The market-data-only host is less likely to be geo-blocked on hosted CI runners.
+    for base_url in (
+        "https://data-api.binance.vision",
+        "https://api1.binance.com",
+        "https://api.binance.com",
+    ):
+        try:
+            return _fetch_binance_daily_from_base(start, end, base_url)
+        except Exception as exc:
+            errors.append(f"{base_url}: {type(exc).__name__}: {exc}")
+    raise RuntimeError("; ".join(errors))
 
 
 def _fetch_okx_daily(start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
@@ -161,46 +176,132 @@ def _fetch_okx_daily(start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
     if not collected:
         raise RuntimeError("OKX returned no daily candles")
     frame = pd.DataFrame({
-        "timestamp": pd.to_datetime([row[0] for row in collected], unit="ms", utc=True).tz_localize(None).normalize(),
+        "timestamp": pd.to_datetime([int(row[0]) for row in collected], unit="ms", utc=True).tz_localize(None).normalize(),
         "open": [float(row[1]) for row in collected],
         "high": [float(row[2]) for row in collected],
         "low": [float(row[3]) for row in collected],
         "close": [float(row[4]) for row in collected],
         "volume": [float(row[5]) for row in collected],
     })
-    return frame[frame["timestamp"].between(start, end)]
+    return frame[(frame["timestamp"] >= start) & (frame["timestamp"] < end)]
 
 
-def refresh_daily_market(cache_path: str | Path, start: str = "2017-08-17") -> tuple[pd.DataFrame, str]:
+def _fetch_coinbase_daily(start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    collected: list[dict[str, str]] = []
+    cursor = pd.Timestamp(start).normalize()
+    end_at = pd.Timestamp(end).normalize()
+    while cursor < end_at:
+        page_end = min(cursor + pd.Timedelta(days=299), end_at)
+        query = urllib.parse.urlencode({
+            "start": int(cursor.timestamp()),
+            "end": int(page_end.timestamp()),
+            "granularity": "ONE_DAY",
+        })
+        payload = _request_json(
+            f"https://api.coinbase.com/api/v3/brokerage/market/products/BTC-USDT/candles?{query}",
+        )
+        chunk = payload.get("candles", []) if isinstance(payload, dict) else []
+        collected.extend(item for item in chunk if isinstance(item, dict))
+        cursor = page_end
+    if not collected:
+        raise RuntimeError("Coinbase returned no daily candles")
+    frame = pd.DataFrame({
+        "timestamp": pd.to_datetime([int(row["start"]) for row in collected], unit="s", utc=True).tz_localize(None).normalize(),
+        "open": [float(row["open"]) for row in collected],
+        "high": [float(row["high"]) for row in collected],
+        "low": [float(row["low"]) for row in collected],
+        "close": [float(row["close"]) for row in collected],
+        "volume": [float(row["volume"]) for row in collected],
+    })
+    return frame[(frame["timestamp"] >= start) & (frame["timestamp"] < end)]
+
+
+def _prepare_daily_market(frame: pd.DataFrame, closed_end: pd.Timestamp) -> pd.DataFrame:
+    required = ["timestamp", "open", "high", "low", "close", "volume"]
+    missing = [column for column in required if column not in frame]
+    if missing:
+        raise RuntimeError(f"Daily market data is missing columns: {', '.join(missing)}")
+    output = frame[required].copy()
+    output["timestamp"] = pd.to_datetime(output["timestamp"], errors="raise").dt.normalize()
+    for column in required[1:]:
+        output[column] = pd.to_numeric(output[column], errors="raise")
+    output = output[output["timestamp"] <= closed_end]
+    output = output.drop_duplicates("timestamp", keep="last").sort_values("timestamp").reset_index(drop=True)
+    if output.empty:
+        raise RuntimeError("Daily market data is empty after closed-candle filtering")
+    invalid = (
+        (output[["open", "high", "low", "close"]] <= 0).any(axis=1)
+        | (output["volume"] < 0)
+        | (output["high"] < output[["open", "close"]].max(axis=1))
+        | (output["low"] > output[["open", "close"]].min(axis=1))
+    )
+    if invalid.any():
+        bad_date = output.loc[invalid, "timestamp"].iloc[0].strftime("%Y-%m-%d")
+        raise RuntimeError(f"Invalid daily OHLCV candle: {bad_date}")
+    return output
+
+
+def refresh_daily_market(
+    cache_path: str | Path,
+    start: str = "2017-08-17",
+    now: pd.Timestamp | None = None,
+) -> tuple[pd.DataFrame, str]:
     cache_path = Path(cache_path)
     cached = pd.read_csv(cache_path, parse_dates=["timestamp"]) if cache_path.exists() else pd.DataFrame()
     requested_start = pd.Timestamp(start)
-    now = utc_now().tz_localize(None)
-    closed_end = now.normalize() - pd.Timedelta(days=1 if now.hour < 24 else 0)
+    current = pd.Timestamp(now) if now is not None else utc_now()
+    if current.tzinfo is not None:
+        current = current.tz_convert("UTC").tz_localize(None)
+    closed_end = current.normalize() - pd.Timedelta(days=1)
     fetch_start = requested_start
+    cached_latest: pd.Timestamp | None = None
     if not cached.empty:
         earliest = pd.to_datetime(cached["timestamp"]).min().normalize()
-        latest = pd.to_datetime(cached["timestamp"]).max().normalize()
+        cached_latest = pd.to_datetime(cached["timestamp"]).max().normalize()
         if earliest <= requested_start:
-            fetch_start = max(requested_start, latest - pd.Timedelta(days=5))
-    provider = "cache"
+            fetch_start = max(requested_start, cached_latest - pd.Timedelta(days=5))
+    provider = "cache-current"
     fresh = pd.DataFrame()
-    try:
-        fresh = _fetch_binance_daily(fetch_start, closed_end + pd.Timedelta(days=1))
-        provider = "Binance"
-    except Exception:
+    errors: list[str] = []
+    providers = (
+        ("Binance", _fetch_binance_daily),
+        ("OKX", _fetch_okx_daily),
+        ("Coinbase", _fetch_coinbase_daily),
+    )
+    for provider_name, fetcher in providers:
         try:
-            fresh = _fetch_okx_daily(fetch_start, closed_end + pd.Timedelta(days=1))
-            provider = "OKX"
-        except Exception:
-            if cached.empty:
-                raise
+            candidate = _prepare_daily_market(
+                fetcher(fetch_start, closed_end + pd.Timedelta(days=1)), closed_end,
+            )
+            candidate_latest = candidate["timestamp"].max().normalize()
+            if candidate_latest < closed_end:
+                raise RuntimeError(
+                    f"latest candle {candidate_latest:%Y-%m-%d}, expected {closed_end:%Y-%m-%d}",
+                )
+            fresh = candidate
+            provider = provider_name
+            print(f"[market] {provider_name} supplied closed candle {closed_end:%Y-%m-%d}")
+            break
+        except Exception as exc:
+            message = f"{provider_name}: {type(exc).__name__}: {exc}"
+            errors.append(message)
+            print(f"[market] provider failed: {message}")
+    if fresh.empty and (cached_latest is None or cached_latest < closed_end):
+        detail = " | ".join(errors) or "no providers attempted"
+        raise RuntimeError(
+            f"Closed BTC candle {closed_end:%Y-%m-%d} is unavailable; "
+            f"cache latest={cached_latest}; {detail}",
+        )
     combined = pd.concat([cached, fresh], ignore_index=True) if not cached.empty else fresh
-    combined["timestamp"] = pd.to_datetime(combined["timestamp"]).dt.normalize()
-    combined = combined.drop_duplicates("timestamp", keep="last").sort_values("timestamp")
-    combined = combined[combined["timestamp"] <= closed_end].reset_index(drop=True)
+    combined = _prepare_daily_market(combined, closed_end)
+    latest_closed = combined["timestamp"].max().normalize()
+    if latest_closed < closed_end:
+        raise RuntimeError(f"Market refresh remained stale at {latest_closed:%Y-%m-%d}")
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    combined.to_csv(cache_path, index=False)
+    temporary = cache_path.with_suffix(cache_path.suffix + ".tmp")
+    temporary.unlink(missing_ok=True)
+    combined.to_csv(temporary, index=False)
+    temporary.replace(cache_path)
     return combined, provider
 
 

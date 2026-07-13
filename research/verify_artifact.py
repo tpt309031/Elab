@@ -26,6 +26,14 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
     if not isinstance(meta, dict) or int(meta.get("schema_version", 0)) < 3:
         raise AssertionError("artifact schema must include immutable learning state")
     latest_closed = pd.Timestamp(meta["latest_closed_utc"]).normalize()
+    generated_at = pd.Timestamp(meta["generated_at"])
+    if generated_at.tzinfo is not None:
+        generated_at = generated_at.tz_convert("UTC").tz_localize(None)
+    expected_closed = generated_at.normalize() - pd.Timedelta(days=1)
+    if latest_closed < expected_closed:
+        raise AssertionError(
+            f"market artifact is stale: latest={latest_closed:%Y-%m-%d}, expected={expected_closed:%Y-%m-%d}",
+        )
     forecasts = state.get("forecasts", [])
     if not isinstance(forecasts, list):
         raise AssertionError("learning forecasts must be a list")
