@@ -7,8 +7,9 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { humanizeFeature } from "@/lib/format";
+import { formatPercent, formatSignedPercent, humanizeFeature } from "@/lib/format";
 import type { ResearchArtifact } from "@/lib/types";
 
 interface ModelPanelProps {
@@ -19,6 +20,8 @@ export function ModelPanel({ data }: ModelPanelProps) {
   const [lane, setLane] = useState<"full" | "calendar">("full");
   const importance = lane === "full" ? data.explainability.full_hybrid : data.explainability.calendar;
   const selection = lane === "full" ? data.models.full_hybrid_latest_selection : data.models.calendar_latest_selection;
+  const laneName = lane === "full" ? "Full Hybrid" : "Calendar";
+  const metrics = data.performance.model_rankings.filter((row) => row.lane === laneName);
   const learning = data.learning?.summary;
   const chart = importance.slice(0, 16).map((row) => ({ feature: humanizeFeature(row.feature), importance: Math.max(0, row.importance) }));
   return (
@@ -62,6 +65,15 @@ export function ModelPanel({ data }: ModelPanelProps) {
           </Card>
         </div>
       </div>
+      <Card>
+        <CardHeader><CardTitle className="text-sm">Champion and challenger evidence</CardTitle></CardHeader>
+        <CardContent className="overflow-x-auto p-0">
+          <Table>
+            <TableHeader><TableRow><TableHead>Rank</TableHead><TableHead>Model</TableHead><TableHead>State</TableHead><TableHead>OOS n</TableHead><TableHead>Directional 90% CI</TableHead><TableHead>Weighted 90% CI</TableHead><TableHead>ECE</TableHead><TableHead>Expectancy 90% CI</TableHead><TableHead>Live evidence</TableHead></TableRow></TableHeader>
+            <TableBody>{metrics.map((row) => <TableRow key={row.model}><TableCell className="font-mono">#{row.rank}</TableCell><TableCell><span className="font-medium">{row.model}</span><small className="block max-w-64 text-muted-foreground">{row.replacement_reason ?? "OOS ranking"}</small></TableCell><TableCell><Badge variant={row.status === "active" ? "default" : "secondary"}>{row.status}</Badge></TableCell><TableCell className="font-mono">{row.observations}</TableCell><TableCell className="whitespace-nowrap font-mono">{formatPercent(row.directional_accuracy)} <small className="text-muted-foreground">[{formatPercent(row.directional_lcb)}–{formatPercent(row.directional_ucb)}]</small></TableCell><TableCell className="whitespace-nowrap font-mono">{formatPercent(row.weighted_accuracy)} <small className="text-muted-foreground">[{formatPercent(row.weighted_lcb)}–{formatPercent(row.weighted_ucb)}]</small></TableCell><TableCell className="font-mono">{formatPercent(row.ece)}</TableCell><TableCell className={row.expectancy >= 0 ? "whitespace-nowrap font-mono text-emerald-400" : "whitespace-nowrap font-mono text-red-400"}>{formatSignedPercent(row.expectancy, 3)} <small className="text-muted-foreground">[{formatSignedPercent(row.expectancy_lcb, 3)}–{formatSignedPercent(row.expectancy_ucb, 3)}]</small></TableCell><TableCell className="font-mono">n={row.live_samples ?? 0}</TableCell></TableRow>)}</TableBody>
+          </Table>
+        </CardContent>
+      </Card>
       <p className="border border-border bg-card p-3 text-xs text-muted-foreground">{data.explainability.method}</p>
     </div>
   );

@@ -101,13 +101,14 @@ export function MarketChart({ market, indices, forecasts }: MarketChartProps) {
     traderIndex.setData(traderIndexData);
     const marketDates = new Set(market.map((row) => row.timestamp.slice(0, 10)));
     const markerData: SeriesMarker<Time>[] = forecasts
-      .filter((row) => row.forecast !== "no-call" && marketDates.has(row.date))
-      .map((row) => ({
+      .map((row) => ({ row, confidence: row.confidence ?? Math.max(row.prob_down, row.prob_sideway, row.prob_up) }))
+      .filter(({ row, confidence }) => row.forecast !== "no-call" && marketDates.has(row.date) && (confidence >= 0.46 || Boolean(row.top_pattern)))
+      .map(({ row, confidence }) => ({
         time: row.date as Time,
         position: row.forecast === "up" ? "belowBar" : row.forecast === "down" ? "aboveBar" : "inBar",
         shape: row.forecast === "up" ? "arrowUp" : row.forecast === "down" ? "arrowDown" : "circle",
         color: row.forecast === "up" ? "#34d399" : row.forecast === "down" ? "#ef4444" : "#fbbf24",
-        text: `${row.forecast.toUpperCase()} ${Math.round((row.expected_score ?? 0) * 100)}%`,
+        text: `${row.forecast.toUpperCase()} ${Math.round(confidence * 100)}%`,
       }));
     createSeriesMarkers(candles, markerData);
     const panes = chart.panes();
@@ -147,6 +148,7 @@ export function MarketChart({ market, indices, forecasts }: MarketChartProps) {
       <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap gap-2 text-[10px]">
         <span className="border border-border bg-black/70 px-2 py-1 text-muted-foreground"><i className="mr-1 inline-block size-2 bg-primary" />BTC Psychology</span>
         <span className="border border-border bg-black/70 px-2 py-1 text-muted-foreground"><i className="mr-1 inline-block size-2 bg-[#4f9dff]" />Trader Energy</span>
+        <span className="border border-border bg-black/70 px-2 py-1 text-muted-foreground">Calls ≥46% or active pattern</span>
       </div>
     </div>
   );

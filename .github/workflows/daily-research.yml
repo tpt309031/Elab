@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: daily-hybrid-research
@@ -65,3 +66,30 @@ jobs:
           fi
           git commit -m "Refresh daily hybrid research"
           git push
+
+      - name: Publish failure summary
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "## Daily research pipeline failed"
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Forecast publication was not advanced."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update pipeline failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TITLE="[ELAB] Daily research pipeline failure"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          ISSUE_NUMBER=$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty')
+          BODY="Daily refresh failed at ${GITHUB_SHA}. Run: ${RUN_URL}. The stale-data fail-closed rule prevented publication."
+          if [[ -n "$ISSUE_NUMBER" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

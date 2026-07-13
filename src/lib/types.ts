@@ -23,6 +23,43 @@ export interface SimilarCase {
   similarity: number;
 }
 
+export interface SourceAttempt {
+  provider: string;
+  status: string;
+  detail?: string;
+}
+
+export interface MarketHealth {
+  status: string;
+  expected_closed_utc: string;
+  actual_closed_utc: string;
+  cache_latest_before_refresh?: string;
+  selected_provider?: string | null;
+  provider_count?: number;
+  cross_exchange_close_discrepancy_bps?: number | null;
+  stale: boolean;
+  attempts: SourceAttempt[];
+}
+
+export interface IntradayHealth {
+  timeframe: string;
+  status: string;
+  provider?: string | null;
+  expected_open_utc?: string | null;
+  actual_open_utc?: string | null;
+  stale?: boolean | null;
+  rows: number;
+  error?: string;
+}
+
+export interface ExternalHealth {
+  source: string;
+  available: boolean;
+  status: string;
+  rows: number;
+  usable_rows: number;
+}
+
 export interface PatternReference {
   id: string;
   name: string;
@@ -80,12 +117,24 @@ export interface ModelMetric {
   weighted_accuracy: number;
   directional_accuracy: number;
   balanced_accuracy: number;
+  mcc?: number;
   brier: number;
+  log_loss?: number;
+  ece?: number;
   sharpe: number;
   profit_factor: number | null;
   max_drawdown: number;
   expectancy: number;
   net_return: number;
+  turnover?: number;
+  exact_lcb?: number;
+  exact_ucb?: number;
+  weighted_lcb?: number;
+  weighted_ucb?: number;
+  directional_lcb?: number;
+  directional_ucb?: number;
+  expectancy_lcb?: number;
+  expectancy_ucb?: number;
   rank_score: number;
   status: "active" | "standby";
   live_samples?: number;
@@ -105,8 +154,11 @@ export interface PatternMetric {
   direction: ForecastDirection;
   occurrences: number;
   weighted_accuracy: number;
+  weighted_lcb?: number;
   exact_accuracy: number;
   expectancy: number;
+  false_discovery_q?: number;
+  eligible?: boolean;
   examples: string[];
   rank: number;
   status: "active" | "standby";
@@ -129,6 +181,29 @@ export interface LearningSummary {
   live_weighted_accuracy: number | null;
   last_evaluated_date: string | null;
   last_selection_date: string | null;
+  event_evaluations?: number;
+  evaluated_events?: number;
+  matched_events?: number;
+  event_match_rate?: number | null;
+}
+
+export interface EventEvaluation {
+  event_id: string;
+  forecast_id: string;
+  target_date: string;
+  lane: string;
+  source_type: "official" | "model" | "pattern";
+  source_name: string;
+  direction: ForecastDirection;
+  window_start: string;
+  window_end: string;
+  matures_after: string;
+  status: "pending" | "matched" | "not-matched";
+  score: number | null;
+  event_date: string | null;
+  lead_lag_days: number | null;
+  matched_event_types: string[];
+  evaluated_at: string | null;
 }
 
 export interface EquityPoint {
@@ -160,6 +235,76 @@ export interface ImportanceRow {
   method: string;
 }
 
+export interface ClassMetric {
+  lane: string;
+  class: "down" | "sideway" | "up";
+  precision: number;
+  recall: number;
+  f1: number;
+  support: number;
+}
+
+export interface ConfusionCell {
+  lane: string;
+  actual: "down" | "sideway" | "up";
+  predicted: "down" | "sideway" | "up";
+  count: number;
+  row_rate: number;
+}
+
+export interface ConfidenceRiskPoint {
+  lane: string;
+  coverage: number;
+  minimum_confidence: number;
+  exact_accuracy: number;
+  weighted_accuracy: number;
+  expectancy: number;
+}
+
+export interface GroupedPerformance {
+  lane: string;
+  dimension: string;
+  value: string;
+  calls: number;
+  exact_accuracy: number;
+  weighted_accuracy: number;
+  directional_accuracy: number;
+  expectancy: number;
+}
+
+export interface FeatureDrift {
+  feature: string;
+  psi: number;
+  mean_shift_z: number;
+  reference_missing: number;
+  recent_missing: number;
+  status: "stable" | "watch" | "alert";
+}
+
+export interface ClassDrift {
+  class: "down" | "sideway" | "up";
+  reference_share: number;
+  recent_share: number;
+  change: number;
+}
+
+export interface FoldMetric {
+  lane: string;
+  fold: string;
+  train_start: string;
+  train_end: string;
+  calibration_fit_end: string;
+  policy_start: string;
+  calibration_end: string;
+  test_start: string;
+  test_end: string;
+  members: string[];
+  weights: number[];
+  stacking_method?: string;
+  stacking_log_loss?: number;
+  uniform_ensemble_log_loss?: number;
+}
+
 export interface ResearchArtifact {
   meta: {
     schema_version: number;
@@ -176,7 +321,18 @@ export interface ResearchArtifact {
     deep_research_enabled: boolean;
     scoring: Record<string, string>;
     availability_assumption: string;
+    data_lineage?: Array<Record<string, string | number | boolean | null>>;
     validation: Record<string, string | number | boolean>;
+  };
+  health?: {
+    market: MarketHealth;
+    intraday: IntradayHealth[];
+    external: ExternalHealth[];
+    last_evaluation: {
+      latest_closed_utc: string;
+      evaluated_forecasts_this_run: number;
+      run_at: string;
+    };
   };
   market: MarketRow[];
   indices: IndexRow[];
@@ -193,6 +349,14 @@ export interface ResearchArtifact {
     full_hybrid_equity: EquityPoint[];
     calendar_reliability: Array<{ bucket: number; confidence: number; observed_accuracy: number; count: number }>;
     full_hybrid_reliability: Array<{ bucket: number; confidence: number; observed_accuracy: number; count: number }>;
+    calendar_folds?: FoldMetric[];
+    full_hybrid_folds?: FoldMetric[];
+    calendar_no_calls?: Array<{ month: string; days: number; no_calls: number }>;
+    full_hybrid_no_calls?: Array<{ month: string; days: number; no_calls: number }>;
+    class_metrics?: ClassMetric[];
+    confusion_matrix?: ConfusionCell[];
+    confidence_risk?: ConfidenceRiskPoint[];
+    grouped?: GroupedPerformance[];
   };
   models: {
     availability: Array<{ model: string; family: string; available: boolean; cadence: string }>;
@@ -211,13 +375,101 @@ export interface ResearchArtifact {
   research: {
     correlation_heatmap: Array<Record<string, string | number | null>>;
     feature_groups: Record<string, string[]>;
+    drift?: {
+      features: FeatureDrift[];
+      classes: ClassDrift[];
+      performance: Record<string, { alarm: boolean; statistic: number; threshold: number; observations: number }>;
+    };
+    event_definitions?: Record<string, string | number>;
   };
   learning?: {
     summary: LearningSummary;
     official_forecast_ledger: OfficialForecastRow[];
+    event_evaluation_ledger?: EventEvaluation[];
     selection_history: Array<Record<string, unknown>>;
     evaluated_this_run: number;
     bootstrapped_this_run: number;
+  };
+}
+
+export interface DeepModelMetric {
+  model: string;
+  rank: number;
+  observations: number;
+  oos_start: string;
+  oos_end: string;
+  exact_accuracy: number;
+  weighted_accuracy: number;
+  directional_accuracy: number;
+  directional_lcb: number;
+  mcc: number;
+  log_loss: number;
+  ece: number;
+  expectancy: number;
+  profit_factor: number | null;
+  net_return: number;
+  max_drawdown: number;
+  rank_score: number;
+  status: "challenger";
+  promotion_eligible: boolean;
+  promotion_reason: string;
+}
+
+export interface DeepResearchArtifact {
+  meta: {
+    schema_version: number;
+    generated_at: string;
+    latest_closed_daily_utc: string;
+    dataset_start: string;
+    dataset_end: string;
+    samples: number;
+    lookback_4h_steps: number;
+    input_features: number;
+    epochs: number;
+    folds: number;
+    official_ledger_isolation: boolean;
+    promotion_gate: string;
+  };
+  dataset: {
+    feature_names: string[];
+    last_bar_rule: string;
+    maximum_last_bar_violation: number;
+  };
+  models: {
+    availability: Array<{ model: string; architecture: string; available: boolean; status: string }>;
+    rankings: DeepModelMetric[];
+    folds: Array<Record<string, string | number>>;
+  };
+  latest_forecasts: Array<{
+    model: string;
+    target_date: string;
+    available_through_utc: string;
+    forecast: ForecastDirection;
+    confidence: number;
+    prob_down: number;
+    prob_sideway: number;
+    prob_up: number;
+    status: "research-only";
+  }>;
+}
+
+export interface SystemHealthResponse {
+  status: "healthy" | "degraded" | "unhealthy";
+  checkedAt: string;
+  expectedClosedUtc: string;
+  artifact: {
+    latestClosedUtc: string | null;
+    generatedAt: string | null;
+    stale: boolean;
+    marketHealth: string | null;
+    error?: string;
+  };
+  deep: {
+    available: boolean;
+    generatedAt: string | null;
+    stale: boolean;
+    architectures: number;
+    error?: string;
   };
 }
 

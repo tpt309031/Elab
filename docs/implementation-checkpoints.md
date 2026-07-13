@@ -167,7 +167,7 @@ Acceptance gate:
 
 ## Checkpoint 5: Dashboard and Alerts
 
-Status: pending
+Status: complete
 
 Files owned by this checkpoint:
 

@@ -1,23 +1,26 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Activity, BarChart3, BrainCircuit, CalendarDays, ChartCandlestick, DatabaseZap, Menu, Radio, RefreshCw, ScanSearch, Target } from "lucide-react";
+import { Activity, AlertTriangle, BarChart3, BrainCircuit, CalendarDays, ChartCandlestick, DatabaseZap, Menu, Radar, Radio, RefreshCw, ScanSearch, ShieldCheck, SlidersHorizontal, Target } from "lucide-react";
 
 import { BacktestPanel } from "@/components/dashboard/backtest-panel";
 import { CorrelationHeatmap } from "@/components/dashboard/correlation-heatmap";
 import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton";
+import { DiagnosticsPanel } from "@/components/dashboard/diagnostics-panel";
+import { EventLab } from "@/components/dashboard/event-lab";
 import { ForecastPanel } from "@/components/dashboard/forecast-panel";
 import { MarketChart } from "@/components/dashboard/market-chart";
 import { ModelPanel } from "@/components/dashboard/model-panel";
 import { PatternPanel } from "@/components/dashboard/pattern-panel";
 import { ProbabilityGauge } from "@/components/dashboard/probability-gauge";
+import { SystemPanel } from "@/components/dashboard/system-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { formatDate, formatPercent, formatSignedPercent, formatUsd } from "@/lib/format";
 import type { ForecastRow, MarketRow } from "@/lib/types";
 import { useResearchData } from "@/lib/use-research-data";
@@ -28,6 +31,9 @@ const navigation = [
   { value: "patterns", label: "Patterns", icon: ScanSearch },
   { value: "backtest", label: "Backtest", icon: BarChart3 },
   { value: "models", label: "Models", icon: BrainCircuit },
+  { value: "diagnostics", label: "Diagnostics", icon: SlidersHorizontal },
+  { value: "events", label: "Event Lab", icon: Radar },
+  { value: "system", label: "System", icon: ShieldCheck },
 ] as const;
 
 function aggregateLiveDay(rows: MarketRow[], latestClosed: string): MarketRow[] {
@@ -54,7 +60,7 @@ function MetricCard({ label, value, detail, tone = "neutral" }: { label: string;
 }
 
 export function DashboardShell() {
-  const { research, live } = useResearchData();
+  const { research, live, deep, health } = useResearchData();
   const [section, setSection] = useState("decision");
   const [windowMonths, setWindowMonths] = useState("3");
   const [showForecasts, setShowForecasts] = useState(true);
@@ -104,10 +110,10 @@ export function DashboardShell() {
     };
   }, [anchorMonth, anchorYear, data, latestClosed, marketWithLive, showForecasts, showIndices, windowMonths]);
 
-  if (research.isLoading || !data) return <DashboardSkeleton />;
   if (research.error) {
     return <main className="grid min-h-screen place-items-center p-6"><Card className="max-w-md"><CardHeader><CardTitle>Research artifact unavailable</CardTitle></CardHeader><CardContent><p className="text-sm text-muted-foreground">{research.error.message}</p><Button className="mt-4" onClick={() => research.mutate()}><RefreshCw />Retry</Button></CardContent></Card></main>;
   }
+  if (research.isLoading || !data) return <DashboardSkeleton />;
   const probabilities = [
     { label: "UP", value: nextFull?.prob_up ?? 1 / 3, className: "[&>div]:bg-emerald-400" },
     { label: "SIDEWAY", value: nextFull?.prob_sideway ?? 1 / 3, className: "[&>div]:bg-amber-300" },
@@ -118,16 +124,17 @@ export function DashboardShell() {
       <header className="mb-5 border-b border-border pb-5">
         <div className="flex items-start justify-between gap-4">
           <div><p className="eyebrow text-primary">ELAB / HYBRID QUANT RESEARCH</p><h1 className="mt-2 text-2xl font-semibold tracking-[-0.04em] sm:text-4xl">BTC Decision Console</h1><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Private energy indices + Astro + patterns + calibrated machine learning, evaluated only through purged walk-forward data.</p></div>
-          <div className="hidden items-center gap-2 lg:flex"><Badge variant="outline" className="h-9 gap-2"><Radio className={`size-3 ${live.data ? "text-emerald-400" : "text-amber-400"}`} />{live.data ? `${live.data.provider} · 5m` : "static daily"}</Badge><Badge variant="secondary" className="h-9 font-mono">closed UTC {data.meta.latest_closed_utc}</Badge></div>
-          <Sheet>
-            <SheetTrigger asChild><Button variant="outline" size="icon" className="md:hidden" aria-label="Open section menu"><Menu /></Button></SheetTrigger>
+          <div className="flex items-center gap-2">
+            <div className="hidden items-center gap-2 lg:flex"><Badge variant="outline" className="h-9 gap-2"><Radio className={`size-3 ${live.data ? "text-emerald-400" : "text-amber-400"}`} />{live.data ? `${live.data.provider} · 5m` : "static daily"}</Badge><Badge variant="secondary" className="h-9 font-mono">closed UTC {data.meta.latest_closed_utc}</Badge></div>
+            <Sheet>
+            <SheetTrigger asChild><Button variant="outline" aria-label="Open section menu"><Menu /><span className="hidden sm:inline">{navigation.find((item) => item.value === section)?.label ?? "Sections"}</span></Button></SheetTrigger>
             <SheetContent side="right"><SheetHeader><SheetTitle>Research sections</SheetTitle></SheetHeader><nav className="mt-6 grid gap-2">{navigation.map((item) => <SheetClose asChild key={item.value}><Button variant={section === item.value ? "default" : "ghost"} className="justify-start" onClick={() => setSection(item.value)}><item.icon />{item.label}</Button></SheetClose>)}</nav></SheetContent>
-          </Sheet>
+            </Sheet>
+          </div>
         </div>
       </header>
 
       <Tabs value={section} onValueChange={setSection}>
-        <TabsList className="mb-4 hidden h-11 w-full justify-start border border-border bg-card p-1 md:flex">{navigation.map((item) => <TabsTrigger key={item.value} value={item.value} className="gap-2 px-4"><item.icon />{item.label}</TabsTrigger>)}</TabsList>
         <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
           <MetricCard label="BTC live" value={formatUsd(latestMarket?.close)} detail={`${live.data?.provider ?? data.meta.market_provider} · ${live.data ? "5-minute refresh" : "closed daily"}`} tone={(liveMove ?? 0) >= 0 ? "positive" : "negative"} />
           <MetricCard label="Current move" value={formatSignedPercent(liveMove)} detail="versus latest closed UTC candle" tone={(liveMove ?? 0) >= 0 ? "positive" : "negative"} />
@@ -135,6 +142,7 @@ export function DashboardShell() {
           <MetricCard label="System target" value={formatPercent(data.meta.target_directional_accuracy)} detail={`current best ${formatPercent(data.meta.achieved_directional_accuracy)}`} tone={data.meta.target_reached ? "positive" : "negative"} />
           <MetricCard label="Next session" value={(nextFull?.forecast ?? "no-call").toUpperCase()} detail={nextFull ? `${formatDate(nextFull.date)} · expected ${formatPercent(nextFull.expected_score)}` : "awaiting research refresh"} />
         </div>
+        {(health.data?.status === "unhealthy" || data.health?.market.stale) && <div className="mb-4 flex gap-2 border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-100"><AlertTriangle className="size-4 shrink-0 text-red-400" /><span>Research freshness check failed. Forecasts remain visible for audit, but no stale artifact should be treated as a new decision.</span></div>}
 
         <TabsContent value="decision" className="space-y-4">
           <div className="flex flex-col gap-3 border border-border bg-card p-3 lg:flex-row lg:items-center lg:justify-between">
@@ -160,6 +168,9 @@ export function DashboardShell() {
         <TabsContent value="patterns"><PatternPanel data={data} /></TabsContent>
         <TabsContent value="backtest"><BacktestPanel data={data} /></TabsContent>
         <TabsContent value="models"><ModelPanel data={data} /></TabsContent>
+        <TabsContent value="diagnostics"><DiagnosticsPanel data={data} /></TabsContent>
+        <TabsContent value="events"><EventLab data={data} /></TabsContent>
+        <TabsContent value="system"><SystemPanel data={data} deep={deep.data} health={health.data} /></TabsContent>
       </Tabs>
       <footer className="mt-8 flex flex-col gap-2 border-t border-border py-5 text-[11px] text-muted-foreground sm:flex-row sm:items-center sm:justify-between"><span>Research decision support only. No performance target is guaranteed.</span><span className="font-mono">schema v{data.meta.schema_version} · {data.meta.oos_start} → {data.meta.oos_end}</span></footer>
     </main>

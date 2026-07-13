@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: weekly-deep-challenger-research
@@ -61,3 +62,29 @@ jobs:
           fi
           git commit -m "Refresh weekly deep challengers"
           git push
+
+      - name: Publish failure summary
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "## Weekly deep challenger pipeline failed"
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Daily production remains isolated and operational."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update deep failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TITLE="[ELAB] Weekly deep challenger failure"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          ISSUE_NUMBER=$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty')
+          BODY="Deep challenger refresh failed at ${GITHUB_SHA}. Run: ${RUN_URL}. Daily production was not modified."
+          if [[ -n "$ISSUE_NUMBER" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

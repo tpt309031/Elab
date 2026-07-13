@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { CalendarDays, ChevronDown, Target } from "lucide-react";
 
 import { AccuracyBar } from "@/components/dashboard/accuracy-bar";
+import { AnalogMiniCard } from "@/components/dashboard/analog-mini-card";
 import { ForecastCalendar } from "@/components/dashboard/forecast-calendar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -109,16 +110,9 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
           </div>
         </details>
         <Card>
-          <CardHeader><CardTitle className="text-sm">Nearest historical analogs</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            {(selected?.similar_cases ?? []).slice(0, 6).map((item) => (
-              <div key={item.date} className="flex items-center justify-between border-b border-border pb-2 text-xs last:border-0">
-                <span className="font-mono text-muted-foreground">{item.date}</span>
-                <span className="uppercase">{item.outcome}</span>
-                <span className={item.move >= 0 ? "font-mono text-emerald-400" : "font-mono text-red-400"}>{formatSignedPercent(item.move)}</span>
-                <span className="font-mono text-muted-foreground">sim {formatPercent(item.similarity)}</span>
-              </div>
-            ))}
+          <CardHeader><CardTitle className="text-sm">Nearest historical analog paths</CardTitle></CardHeader>
+          <CardContent className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+            {(selected?.similar_cases ?? []).slice(0, 6).map((item) => <AnalogMiniCard key={item.date} item={item} market={data.market} />)}
             {!selected?.similar_cases?.length && <p className="text-sm text-muted-foreground">Analog evidence is shown for future calendar calls.</p>}
           </CardContent>
         </Card>
