@@ -10,6 +10,7 @@ from research.hybrid_core import (
     allocate_monthly_directions,
     build_feature_frame,
     grade_forecast,
+    maximum_monthly_forecast_counts,
     monthly_purged_folds,
 )
 
@@ -67,6 +68,34 @@ def test_monthly_sideway_calls_are_capped_at_eight() -> None:
     assert (monthly_sideway <= 8).all()
     assert monthly_sideway.loc["2026-01"] == 8
     assert result["override"].any()
+
+
+def test_future_sideway_capacity_respects_locked_monthly_calls() -> None:
+    dates = pd.date_range("2026-07-13", periods=8, freq="D")
+    probabilities = np.tile(np.array([0.20, 0.60, 0.20]), (len(dates), 1))
+    directions, _, _, overrides = allocate_monthly_directions(
+        dates,
+        probabilities,
+        np.eye(3),
+        policy_mode="probability",
+        existing_sideway_per_month={"2026-07": 8},
+        excluded_dates={"2026-07-13"},
+    )
+    assert directions[0] == "sideway"
+    assert all(direction != "sideway" for direction in directions[1:])
+    assert overrides[1:].all()
+
+
+def test_monthly_capacity_uses_most_constrained_authoritative_lane() -> None:
+    calendar = pd.DataFrame({
+        "date": pd.date_range("2026-07-01", periods=4, freq="D"),
+        "forecast": ["no-call", "no-call", "up", "down"],
+    })
+    fusion = pd.DataFrame({
+        "date": pd.date_range("2026-07-01", periods=5, freq="D"),
+        "forecast": ["no-call", "no-call", "no-call", "sideway", "up"],
+    })
+    assert maximum_monthly_forecast_counts([calendar, fusion], "no-call") == {"2026-07": 3}
 
 
 def test_monthly_folds_are_purged_and_chronological() -> None:

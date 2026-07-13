@@ -14,6 +14,69 @@ from research.hybrid_core import grade_forecast
 from research.learning import load_learning_state, official_forecast_digest
 
 
+def _merged_forecasts(*sources: list[dict[str, object]]) -> list[dict[str, object]]:
+    rows: dict[str, dict[str, object]] = {}
+    for source in sources:
+        for row in source:
+            if not isinstance(row, dict):
+                continue
+            date = row.get("date") or row.get("target_date")
+            if date:
+                rows[str(date)[:10]] = row
+    return [rows[key] for key in sorted(rows)]
+
+
+def _monthly_forecast_counts(rows: list[dict[str, object]], forecast: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        date = row.get("date") or row.get("target_date")
+        if not date or row.get("forecast") != forecast:
+            continue
+        month = str(date)[:7]
+        counts[month] = counts.get(month, 0) + 1
+    return counts
+
+
+def _verify_monthly_policy_caps(artifact: dict[str, object]) -> None:
+    meta = artifact.get("meta", {})
+    validation = meta.get("validation", {}) if isinstance(meta, dict) else {}
+    sideway_cap = int(validation.get("maximum_sideway_calls_per_month", 8))
+    no_call_cap = int(validation.get("maximum_no_calls_per_month", 6))
+    forecast_payload = artifact.get("forecast", {})
+    learning = artifact.get("learning", {})
+    if not isinstance(forecast_payload, dict) or not isinstance(learning, dict):
+        return
+    official = learning.get("official_forecast_ledger", [])
+    if not isinstance(official, list):
+        official = []
+    official_calendar = [row for row in official if isinstance(row, dict) and row.get("lane") == "Calendar"]
+    official_full = [row for row in official if isinstance(row, dict) and row.get("lane") == "Full Hybrid"]
+    historical_calendar = forecast_payload.get("historical_calendar_oos", [])
+    historical_full = forecast_payload.get("historical_full_hybrid_oos", [])
+    calendar_future = forecast_payload.get("calendar", [])
+    full_next = forecast_payload.get("full_hybrid_next_session", [])
+    lanes = {
+        "Calendar": (
+            _merged_forecasts(historical_calendar, official_calendar),
+            _merged_forecasts(historical_calendar, calendar_future, official_calendar),
+        ),
+        "Full Hybrid": (
+            _merged_forecasts(historical_full, official_full),
+            _merged_forecasts(historical_full, calendar_future, full_next, official_full),
+        ),
+    }
+    for lane, (locked, visible) in lanes.items():
+        for forecast, configured_cap in (("sideway", sideway_cap), ("no-call", no_call_cap)):
+            locked_counts = _monthly_forecast_counts(locked, forecast)
+            visible_counts = _monthly_forecast_counts(visible, forecast)
+            for month, count in visible_counts.items():
+                allowed = max(configured_cap, locked_counts.get(month, 0))
+                if count > allowed:
+                    raise AssertionError(
+                        f"{lane} exceeds {forecast} capacity in {month}: {count} > {allowed}",
+                    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify the published learning and forecast contract")
     parser.add_argument("--artifact", type=Path, default=ROOT / "public" / "data" / "hybrid_research.json")
@@ -159,6 +222,8 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
             raise AssertionError(f"{key} has more than 16 active patterns")
         if any(not row.get("eligible") for row in active):
             raise AssertionError(f"{key} contains an ineligible active pattern")
+
+    _verify_monthly_policy_caps(artifact)
 
     learning = artifact.get("learning", {})
     summary = learning.get("summary", {}) if isinstance(learning, dict) else {}

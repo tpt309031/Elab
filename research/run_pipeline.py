@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from research.hybrid_core import (
+    MAX_NO_CALL_PER_MONTH,
     MAX_SIDEWAY_PER_MONTH,
     OOS_START,
     build_feature_frame,
@@ -86,6 +87,28 @@ def _monthly_metrics(forecasts: pd.DataFrame, lane: str) -> pd.DataFrame:
             "expectancy": float(calls["strategy_return"].mean()) if len(calls) else np.nan,
         })
     return pd.DataFrame(rows)
+
+
+def _capacity_history(
+    forecasts: pd.DataFrame,
+    state: dict[str, object],
+    lane: str,
+) -> pd.DataFrame:
+    """Overlay immutable official calls on OOS history for monthly policy capacity."""
+    base = forecasts[["date", "forecast"]].copy() if not forecasts.empty else pd.DataFrame(columns=["date", "forecast"])
+    official_rows = []
+    for row in state.get("forecasts", []):
+        if not isinstance(row, dict) or row.get("lane") != lane:
+            continue
+        date = row.get("date") or row.get("target_date")
+        if date and row.get("forecast"):
+            official_rows.append({"date": date, "forecast": row["forecast"]})
+    official = pd.DataFrame(official_rows, columns=["date", "forecast"])
+    combined = pd.concat([base, official], ignore_index=True)
+    if combined.empty:
+        return combined
+    combined["date"] = pd.to_datetime(combined["date"]).dt.normalize()
+    return combined.drop_duplicates("date", keep="last").sort_values("date").reset_index(drop=True)
 
 
 def _compact_ohlcv(market: pd.DataFrame) -> list[dict[str, object]]:
@@ -275,6 +298,8 @@ def main() -> None:
         & ~full.model_metrics["model"].str.contains("Ensemble"),
         "model",
     ].tolist()
+    calendar_capacity = _capacity_history(calendar.forecasts, learning_state, "Calendar")
+    full_capacity = _capacity_history(full.forecasts, learning_state, "Full Hybrid")
     calendar_future, calendar_selection, calendar_registry = fit_latest_forecasts(
         frame,
         groups["calendar"],
@@ -284,6 +309,7 @@ def main() -> None:
         len(groups["sequence_calendar_base"]),
         args.deep,
         policy_history=calendar.forecasts,
+        capacity_histories=[calendar_capacity, full_capacity],
         preferred_models=calendar_preferred,
         pattern_adjuster=lambda registry: apply_live_pattern_ranking(
             registry, learning_state, "Calendar", as_of_closed=latest_closed,
@@ -299,6 +325,7 @@ def main() -> None:
         args.deep,
         max_future_days=1,
         policy_history=full.forecasts,
+        capacity_histories=[full_capacity],
         preferred_models=full_preferred,
         pattern_adjuster=lambda registry: apply_live_pattern_ranking(
             registry, learning_state, "Full Hybrid", as_of_closed=latest_closed,
@@ -445,7 +472,7 @@ def main() -> None:
                 "calibration_partition": "first 67% calibrator fit; final 33% policy and ensemble selection",
                 "calibration_methods": "identity, sigmoid, temperature, isotonic when sample-gated",
                 "stacking": "non-negative simplex weights learned only from pre-test OOS policy validation probabilities",
-                "maximum_no_calls_per_month": 6,
+                "maximum_no_calls_per_month": MAX_NO_CALL_PER_MONTH,
                 "maximum_sideway_calls_per_month": MAX_SIDEWAY_PER_MONTH,
                 "transaction_cost_bps": 5,
                 "daily_evaluation_utc": "03:20",

@@ -9,7 +9,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -36,6 +36,7 @@ UP_CORRECT = 0.03
 DOWN_CORRECT = -0.03
 SIDEWAY_LIMIT = 0.01
 MAX_SIDEWAY_PER_MONTH = 8
+MAX_NO_CALL_PER_MONTH = 6
 UP_PARTIAL_MIN = 0.001
 DOWN_PARTIAL_MAX = -0.001
 TRADING_COST = 0.0005
@@ -750,6 +751,8 @@ def allocate_monthly_directions(
     policy_mode: str = "reward",
     sideway_penalty: float = 1.0,
     max_sideway_per_month: int = MAX_SIDEWAY_PER_MONTH,
+    existing_sideway_per_month: Mapping[str, int] | None = None,
+    excluded_dates: Iterable[object] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Apply the decision policy while retaining only the strongest monthly sideway calls."""
     probabilities = np.asarray(probabilities, dtype=float)
@@ -763,16 +766,27 @@ def allocate_monthly_directions(
     selected = np.argmax(utilities, axis=1).astype(int)
     overridden = np.zeros(len(selected), dtype=bool)
     month_keys = pd.to_datetime(pd.Series(list(dates))).dt.strftime("%Y-%m").to_numpy()
+    date_keys = pd.to_datetime(pd.Series(list(dates))).dt.strftime("%Y-%m-%d").to_numpy()
     sideway_index = CLASS_TO_INDEX["sideway"]
+    existing = {str(key): max(0, int(value)) for key, value in (existing_sideway_per_month or {}).items()}
+    excluded = {
+        pd.Timestamp(value).strftime("%Y-%m-%d")
+        for value in (excluded_dates or [])
+    }
 
     for month_key in pd.unique(month_keys):
-        candidates = np.flatnonzero((month_keys == month_key) & (selected == sideway_index))
-        if len(candidates) <= max_sideway_per_month:
+        available = max(0, max_sideway_per_month - existing.get(str(month_key), 0))
+        candidates = np.flatnonzero(
+            (month_keys == month_key)
+            & (selected == sideway_index)
+            & ~np.isin(date_keys, list(excluded))
+        )
+        if len(candidates) <= available:
             continue
         directional_best = np.maximum(utilities[candidates, 0], utilities[candidates, 2])
         sideway_advantage = utilities[candidates, sideway_index] - directional_best
         order = np.argsort(-sideway_advantage, kind="stable")
-        rejected = candidates[order[max_sideway_per_month:]]
+        rejected = candidates[order[available:]]
         selected[rejected] = np.where(
             utilities[rejected, CLASS_TO_INDEX["up"]] > utilities[rejected, CLASS_TO_INDEX["down"]],
             CLASS_TO_INDEX["up"],
@@ -787,6 +801,34 @@ def allocate_monthly_directions(
         margins[row_index] = expected_scores[row_index] - float(np.max(alternatives))
     directions = np.asarray(CLASS_NAMES, dtype=object)[selected]
     return directions, expected_scores, margins, overridden
+
+
+def maximum_monthly_forecast_counts(
+    histories: Sequence[pd.DataFrame] | None,
+    forecast: str,
+) -> dict[str, int]:
+    """Return the largest locked monthly count across authoritative lane histories."""
+    maximums: dict[str, int] = {}
+    for history in histories or []:
+        if history is None or history.empty or not {"date", "forecast"}.issubset(history.columns):
+            continue
+        rows = history.loc[history["forecast"] == forecast, ["date"]].copy()
+        if rows.empty:
+            continue
+        rows["month"] = pd.to_datetime(rows["date"]).dt.strftime("%Y-%m")
+        for month, count in rows.groupby("month").size().items():
+            maximums[str(month)] = max(maximums.get(str(month), 0), int(count))
+    return maximums
+
+
+def reserved_forecast_dates(histories: Sequence[pd.DataFrame] | None) -> set[str]:
+    """Dates already fixed by an immutable or historical forecast must not consume capacity twice."""
+    reserved: set[str] = set()
+    for history in histories or []:
+        if history is None or history.empty or "date" not in history.columns:
+            continue
+        reserved.update(pd.to_datetime(history["date"]).dt.strftime("%Y-%m-%d").tolist())
+    return reserved
 
 
 def select_decision_policy(
@@ -1030,7 +1072,12 @@ def _decision_rows(
         volatility_ratio = volatility_array[index] / median_volatility if median_volatility > 0 else 1.0
         uncertainty_threshold = 0.965 - 0.015 * np.clip(volatility_ratio - 1, -1, 1)
         month_key = pd.Timestamp(date).strftime("%Y-%m")
-        no_call = bool(dynamic_no_call and entropy >= uncertainty_threshold and margin < 0.025 and monthly_abstentions[month_key] < 6)
+        no_call = bool(
+            dynamic_no_call
+            and entropy >= uncertainty_threshold
+            and margin < 0.025
+            and monthly_abstentions[month_key] < MAX_NO_CALL_PER_MONTH
+        )
         if no_call:
             monthly_abstentions[month_key] += 1
             status, score = "no-call", math.nan
@@ -1538,6 +1585,7 @@ def fit_latest_forecasts(
     include_deep: bool = False,
     max_future_days: int | None = None,
     policy_history: pd.DataFrame | None = None,
+    capacity_histories: Sequence[pd.DataFrame] | None = None,
     preferred_models: Sequence[str] | None = None,
     pattern_adjuster: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -1708,12 +1756,18 @@ def fit_latest_forecasts(
         policy_probabilities, policy_returns, matrix, policy_dates,
     )
     matching_pattern_sets = _matching_pattern_sets(future, final_registry)
-    monthly_abstentions: defaultdict[str, int] = defaultdict(int)
+    locked_histories = list(capacity_histories or ([policy_history] if policy_history is not None else []))
+    existing_sideways = maximum_monthly_forecast_counts(locked_histories, "sideway")
+    existing_no_calls = maximum_monthly_forecast_counts(locked_histories, "no-call")
+    reserved_dates = reserved_forecast_dates(locked_histories)
+    monthly_abstentions: defaultdict[str, int] = defaultdict(int, existing_no_calls)
     forecast_rows: list[dict[str, object]] = []
     finite_volatility = development["volatility_7"].dropna()
     median_volatility = float(finite_volatility.median()) if len(finite_volatility) else 0.03
     directions, expected_scores, margins, sideway_overrides = allocate_monthly_directions(
         future["date"], ensemble, matrix, policy_mode, sideway_penalty,
+        existing_sideway_per_month=existing_sideways,
+        excluded_dates=reserved_dates,
     )
     for row_index, (_, row) in enumerate(future.iterrows()):
         probability = ensemble[row_index]
@@ -1725,7 +1779,13 @@ def fit_latest_forecasts(
         volatility_ratio = float(current_volatility / median_volatility) if np.isfinite(current_volatility) and median_volatility > 0 else 1.0
         uncertainty_threshold = 0.965 - 0.015 * np.clip(volatility_ratio - 1, -1, 1)
         month_key = pd.Timestamp(row["date"]).strftime("%Y-%m")
-        no_call = bool(entropy >= uncertainty_threshold and margin < 0.025 and monthly_abstentions[month_key] < 6)
+        date_key = pd.Timestamp(row["date"]).strftime("%Y-%m-%d")
+        no_call = bool(
+            date_key not in reserved_dates
+            and entropy >= uncertainty_threshold
+            and margin < 0.025
+            and monthly_abstentions[month_key] < MAX_NO_CALL_PER_MONTH
+        )
         if no_call:
             monthly_abstentions[month_key] += 1
         forecast_rows.append({
