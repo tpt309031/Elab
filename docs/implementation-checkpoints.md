@@ -104,7 +104,7 @@ Acceptance gate:
 
 ## Checkpoint 3: Tabular and Hybrid Model Suite
 
-Status: pending
+Status: complete
 
 Files owned by this checkpoint:
 

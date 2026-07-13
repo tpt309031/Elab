@@ -14,13 +14,9 @@ from typing import Callable, Iterable, Sequence
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
-from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import balanced_accuracy_score, log_loss
 from sklearn.neighbors import NearestNeighbors
-from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from research.data_sources import PREPUBLISHED_AT, availability_series
@@ -30,6 +26,7 @@ from research.evaluation import (
     moving_block_confidence_intervals,
     multiclass_diagnostics,
 )
+from research.model_candidates import candidate_model_specs, learn_simplex_weights
 
 
 CLASS_NAMES = ("down", "sideway", "up")
@@ -533,6 +530,34 @@ def build_feature_frame(
         frame.loc[unavailable_astro, ["finance", "career", "volatility", "composite"]] = np.nan
         frame.loc[unavailable_astro, "event"] = False
 
+    return_median = frame["market_return_1"].rolling(63, min_periods=30).median()
+    return_mad = (frame["market_return_1"] - return_median).abs().rolling(63, min_periods=30).median()
+    volatility_median = frame["volatility_7"].rolling(63, min_periods=30).median()
+    volatility_mad = (frame["volatility_7"] - volatility_median).abs().rolling(63, min_periods=30).median()
+    frame["volatility_regime_z"] = _rolling_zscore(frame["volatility_7"], 63).clip(-5, 5)
+    trend_scale = (frame["volatility_21"] * np.sqrt(20)).replace(0, np.nan)
+    frame["trend_regime_score"] = (frame["distance_ma20"] / trend_scale).clip(-5, 5)
+    frame["trend_regime"] = np.select(
+        [frame["trend_regime_score"] >= 0.5, frame["trend_regime_score"] <= -0.5],
+        [1.0, -1.0],
+        default=0.0,
+    )
+    frame["return_change_point"] = (
+        (frame["market_return_1"] - return_median).abs() > (3.0 * 1.4826 * return_mad).clip(lower=0.008)
+    ).astype(float)
+    frame["volatility_change_point"] = (
+        (frame["volatility_7"] - volatility_median).abs() > (2.5 * 1.4826 * volatility_mad).clip(lower=0.002)
+    ).astype(float)
+    frame["regime_transition"] = (
+        frame["trend_regime"].ne(frame["trend_regime"].shift(1))
+        | frame["return_change_point"].gt(0)
+        | frame["volatility_change_point"].gt(0)
+    ).astype(float)
+    technical_columns.extend([
+        "volatility_regime_z", "trend_regime_score", "trend_regime",
+        "return_change_point", "volatility_change_point", "regime_transition",
+    ])
+
     frame["index_available"] = frame[["index_BTC", "index_me"]].notna().all(axis=1).astype(float)
     frame["index_availability_imputed"] = frame[[
         "index_BTC_availability_imputed", "index_me_availability_imputed",
@@ -659,6 +684,11 @@ def build_feature_frame(
 
 
 PATTERN_DEFINITIONS: dict[str, tuple[str, str]] = {
+    "positive_return_change_point": ("(return_change_point > 0) & (market_return_1 > 0)", "Positive price change point before the target session"),
+    "negative_return_change_point": ("(return_change_point > 0) & (market_return_1 < 0)", "Negative price change point before the target session"),
+    "high_volatility_transition": ("(volatility_change_point > 0) & (volatility_regime_z > 0)", "Transition into a high-volatility regime"),
+    "bull_trend_regime": ("trend_regime > 0", "Lagged market trend is in a positive regime"),
+    "bear_trend_regime": ("trend_regime < 0", "Lagged market trend is in a negative regime"),
     "btc_extreme_high": ("index_BTC >= 80", "BTC psychology in extreme-high zone"),
     "btc_extreme_low": ("index_BTC <= 20", "BTC psychology in extreme-low zone"),
     "trader_extreme_high": ("index_me >= 80", "Trader energy in extreme-high zone"),
@@ -921,91 +951,13 @@ def _align_probabilities(model: object, probabilities: np.ndarray) -> np.ndarray
     return output
 
 
-def candidate_models(feature_columns: Sequence[str], random_state: int = 42) -> dict[str, Pipeline]:
-    linear_preprocessor = ColumnTransformer(
-        [("numeric", Pipeline([
-            ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
-            ("scale", StandardScaler()),
-        ]), list(feature_columns))],
-        remainder="drop",
-    )
-    tree_preprocessor = ColumnTransformer(
-        [("numeric", SimpleImputer(strategy="median", keep_empty_features=True), list(feature_columns))],
-        remainder="drop",
-    )
-    candidates: dict[str, Pipeline] = {
-        "Logistic": Pipeline([
-            ("preprocess", clone(linear_preprocessor)),
-            ("model", LogisticRegression(C=0.35, max_iter=1500, class_weight="balanced")),
-        ]),
-        "Random Forest": Pipeline([
-            ("preprocess", clone(tree_preprocessor)),
-            ("model", RandomForestClassifier(
-                n_estimators=240,
-                max_depth=7,
-                min_samples_leaf=10,
-                max_features=0.65,
-                class_weight="balanced_subsample",
-                n_jobs=-1,
-                random_state=random_state,
-            )),
-        ]),
-        "HistGradientBoosting": Pipeline([
-            ("preprocess", clone(tree_preprocessor)),
-            ("model", HistGradientBoostingClassifier(
-                learning_rate=0.04,
-                max_iter=180,
-                max_leaf_nodes=15,
-                l2_regularization=1.5,
-                min_samples_leaf=18,
-                random_state=random_state,
-            )),
-        ]),
+def candidate_models(feature_columns: Sequence[str], random_state: int = 42) -> dict[str, object]:
+    """Compatibility view used by explainability; return classifiers with categorical targets."""
+    return {
+        spec.name: spec.estimator
+        for spec in candidate_model_specs(feature_columns, random_state)
+        if spec.target_column == "target"
     }
-    try:
-        from xgboost import XGBClassifier
-
-        candidates["XGBoost"] = Pipeline([
-            ("preprocess", clone(tree_preprocessor)),
-            ("model", XGBClassifier(
-                n_estimators=220,
-                max_depth=3,
-                learning_rate=0.035,
-                min_child_weight=8,
-                subsample=0.78,
-                colsample_bytree=0.72,
-                reg_alpha=0.2,
-                reg_lambda=2.0,
-                objective="multi:softprob",
-                eval_metric="mlogloss",
-                n_jobs=-1,
-                random_state=random_state,
-            )),
-        ])
-    except ImportError:
-        pass
-    try:
-        from lightgbm import LGBMClassifier
-
-        candidates["LightGBM"] = Pipeline([
-            ("preprocess", clone(tree_preprocessor)),
-            ("model", LGBMClassifier(
-                n_estimators=220,
-                num_leaves=15,
-                learning_rate=0.035,
-                min_child_samples=20,
-                subsample=0.8,
-                colsample_bytree=0.75,
-                reg_alpha=0.2,
-                reg_lambda=2.0,
-                verbosity=-1,
-                n_jobs=-1,
-                random_state=random_state,
-            )),
-        ])
-    except ImportError:
-        pass
-    return candidates
 
 
 def monthly_purged_folds(
@@ -1252,9 +1204,9 @@ def run_walk_forward(
             continue
         matrix = reward_matrix(train)
         candidates: list[CandidatePrediction] = []
-        model_specs: list[tuple[str, object, Sequence[str]]] = [
-            (name, model, feature_columns)
-            for name, model in candidate_models(feature_columns, random_state=42 + fold_number).items()
+        model_specs: list[tuple[str, object, Sequence[str], str]] = [
+            (spec.name, spec.estimator, spec.columns, spec.target_column)
+            for spec in candidate_model_specs(feature_columns, random_state=42 + fold_number)
         ]
         if include_deep and sequence_columns and sequence_base_count:
             try:
@@ -1269,6 +1221,7 @@ def run_walk_forward(
                             random_state=42 + fold_number,
                         ),
                         sequence_columns,
+                        "target",
                     ),
                     (
                         "Transformer",
@@ -1278,14 +1231,20 @@ def run_walk_forward(
                             random_state=84 + fold_number,
                         ),
                         sequence_columns,
+                        "target",
                     ),
                 ])
             except ImportError:
                 pass
-        for name, model, model_columns in model_specs:
+        for name, model, model_columns, target_column in model_specs:
             fitted = clone(model)
             try:
-                fitted.fit(train[list(model_columns)], train["target"].astype(int))
+                target_values = (
+                    train[target_column].astype(int)
+                    if target_column == "target"
+                    else train[target_column].astype(float)
+                )
+                fitted.fit(train[list(model_columns)], target_values)
                 calibration_fit_raw = _align_probabilities(
                     fitted, fitted.predict_proba(calibration_fit[list(model_columns)]),
                 )
@@ -1348,11 +1307,11 @@ def run_walk_forward(
 
         if not candidates:
             continue
-        scores = np.array([candidate.calibration_score for candidate in candidates])
-        median_score = float(np.nanmedian(scores))
-        gated = [candidate for candidate in candidates if candidate.calibration_score >= median_score - 0.03]
-        weights = np.array([candidate.weight for candidate in gated], dtype=float)
-        weights = weights / weights.sum() if weights.sum() > 0 else np.full(len(gated), 1 / len(gated))
+        gated = candidates
+        weights, stacking_diagnostics = learn_simplex_weights(
+            [candidate.calibration_probabilities for candidate in gated],
+            policy_validation["target"].astype(int).to_numpy(),
+        )
         ensemble_calibration = sum(
             weight * candidate.calibration_probabilities for weight, candidate in zip(weights, gated)
         )
@@ -1406,6 +1365,9 @@ def run_walk_forward(
             "expectancy": float(calls["strategy_return"].mean()) if len(calls) else math.nan,
             "members": [candidate.name for candidate in gated],
             "weights": [float(value) for value in weights],
+            "stacking_method": stacking_diagnostics["method"],
+            "stacking_log_loss": stacking_diagnostics.get("loss"),
+            "uniform_ensemble_log_loss": stacking_diagnostics.get("uniform_loss"),
             "calibration_methods": {
                 candidate.name: candidate.calibration_method for candidate in candidates
             },
@@ -1602,8 +1564,9 @@ def fit_latest_forecasts(
     matrix = reward_matrix(train)
     candidates: list[CandidatePrediction] = []
     future_probabilities_by_model: dict[str, np.ndarray] = {}
-    model_specs: list[tuple[str, object, Sequence[str]]] = [
-        (name, model, feature_columns) for name, model in candidate_models(feature_columns).items()
+    model_specs: list[tuple[str, object, Sequence[str], str]] = [
+        (spec.name, spec.estimator, spec.columns, spec.target_column)
+        for spec in candidate_model_specs(feature_columns)
     ]
     if include_deep and sequence_columns and sequence_base_count:
         try:
@@ -1614,6 +1577,7 @@ def fit_latest_forecasts(
                     "LSTM",
                     TorchSequenceClassifier(architecture="lstm", input_features=sequence_base_count),
                     sequence_columns,
+                    "target",
                 ),
                 (
                     "Transformer",
@@ -1621,14 +1585,20 @@ def fit_latest_forecasts(
                         architecture="transformer", input_features=sequence_base_count, random_state=84,
                     ),
                     sequence_columns,
+                    "target",
                 ),
             ])
         except ImportError:
             pass
-    for name, model, model_columns in model_specs:
+    for name, model, model_columns, target_column in model_specs:
         initial = clone(model)
         try:
-            initial.fit(train[list(model_columns)], train["target"].astype(int))
+            train_target = (
+                train[target_column].astype(int)
+                if target_column == "target"
+                else train[target_column].astype(float)
+            )
+            initial.fit(train[list(model_columns)], train_target)
             calibration_fit_raw = _align_probabilities(
                 initial, initial.predict_proba(calibration_fit[list(model_columns)]),
             )
@@ -1640,7 +1610,12 @@ def fit_latest_forecasts(
             )
             calibration_probabilities = calibrator.transform(policy_raw)
             final_model = clone(model)
-            final_model.fit(development[list(model_columns)], development["target"].astype(int))
+            development_target = (
+                development[target_column].astype(int)
+                if target_column == "target"
+                else development[target_column].astype(float)
+            )
+            final_model.fit(development[list(model_columns)], development_target)
             future_raw = _align_probabilities(final_model, final_model.predict_proba(future[list(model_columns)]))
             future_probabilities = calibrator.transform(future_raw)
         except Exception:
@@ -1699,20 +1674,26 @@ def fit_latest_forecasts(
         pass
     if not candidates:
         return pd.DataFrame(), pd.DataFrame(), final_registry
-    median_score = float(np.nanmedian([candidate.calibration_score for candidate in candidates]))
     preferred = set(preferred_models or [])
-    selected = [
-        candidate for candidate in candidates
-        if candidate.calibration_score >= median_score - 0.06 and (not preferred or candidate.name in preferred)
-    ]
+    selected = [candidate for candidate in candidates if not preferred or candidate.name in preferred]
     if not selected:
-        selected = [candidate for candidate in candidates if candidate.calibration_score >= median_score - 0.03]
-    weights = np.array([candidate.weight for candidate in selected], dtype=float)
-    weights = weights / weights.sum() if weights.sum() > 0 else np.full(len(selected), 1 / len(selected))
+        selected = candidates
+    weights, stacking_diagnostics = learn_simplex_weights(
+        [candidate.calibration_probabilities for candidate in selected],
+        policy_validation["target"].astype(int).to_numpy(),
+    )
     ensemble_calibration = sum(
         weight * candidate.calibration_probabilities for weight, candidate in zip(weights, selected)
     )
     ensemble = sum(weight * future_probabilities_by_model[candidate.name] for weight, candidate in zip(weights, selected))
+    effective_members = [
+        (candidate, float(weight))
+        for candidate, weight in zip(selected, weights)
+        if weight >= 0.005
+    ]
+    if not effective_members:
+        best_index = int(np.argmax(weights))
+        effective_members = [(selected[best_index], float(weights[best_index]))]
     policy_probabilities = ensemble_calibration
     policy_returns = policy_validation["daily_return"].to_numpy(dtype=float)
     policy_dates = policy_validation["date"].to_numpy()
@@ -1763,8 +1744,10 @@ def fit_latest_forecasts(
             # Only the next publishable session needs complete live-learning provenance.
             "matching_patterns": matching_pattern_sets[row_index] if row_index == 0 else [],
             "similar_cases": analog_details[row_index],
-            "model_members": [candidate.name for candidate in selected],
-            "model_weights": [float(weight) for weight in weights],
+            "model_members": [candidate.name for candidate, _ in effective_members],
+            "model_weights": [weight for _, weight in effective_members],
+            "stacking_method": stacking_diagnostics["method"],
+            "stacking_log_loss": stacking_diagnostics.get("loss"),
             "policy_mode": policy_mode,
             "sideway_penalty": sideway_penalty,
             "sideway_cap_override": bool(sideway_overrides[row_index]),
@@ -1784,7 +1767,7 @@ def fit_latest_forecasts(
             "calibration_method": candidate.calibration_method,
             "calibration_selection_log_loss": candidate.calibration_selection_log_loss,
             "weight": selected_weights.get(candidate.name, 0.0),
-            "status": "active" if candidate.name in selected_weights else "standby",
+            "status": "active" if selected_weights.get(candidate.name, 0.0) >= 0.005 else "standby",
             "next_forecast": next_direction,
             "next_prob_down": float(next_probability[0]),
             "next_prob_sideway": float(next_probability[1]),

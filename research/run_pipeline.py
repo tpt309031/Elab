@@ -53,6 +53,7 @@ from research.learning import (
     record_selection_snapshot,
     serialize_learning_state,
 )
+from research.model_candidates import model_availability_rows
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,12 +97,7 @@ def _compact_ohlcv(market: pd.DataFrame) -> list[dict[str, object]]:
 def _availability(include_deep: bool) -> list[dict[str, object]]:
     import importlib.util
 
-    rows = [
-        {"model": "Logistic", "family": "linear", "available": True, "cadence": "daily"},
-        {"model": "Random Forest", "family": "tree", "available": True, "cadence": "daily"},
-        {"model": "HistGradientBoosting", "family": "tree", "available": True, "cadence": "daily"},
-        {"model": "XGBoost", "family": "boosting", "available": importlib.util.find_spec("xgboost") is not None, "cadence": "daily"},
-        {"model": "LightGBM", "family": "boosting", "available": importlib.util.find_spec("lightgbm") is not None, "cadence": "daily"},
+    rows = model_availability_rows() + [
         {"model": "LSTM", "family": "sequence", "available": include_deep and importlib.util.find_spec("torch") is not None, "cadence": "weekly gated"},
         {"model": "Transformer", "family": "sequence", "available": include_deep and importlib.util.find_spec("torch") is not None, "cadence": "weekly gated"},
         {"model": "Pattern Registry", "family": "rules", "available": True, "cadence": "daily"},
@@ -448,6 +444,7 @@ def main() -> None:
                 "calibration_days": 90,
                 "calibration_partition": "first 67% calibrator fit; final 33% policy and ensemble selection",
                 "calibration_methods": "identity, sigmoid, temperature, isotonic when sample-gated",
+                "stacking": "non-negative simplex weights learned only from pre-test OOS policy validation probabilities",
                 "maximum_no_calls_per_month": 6,
                 "maximum_sideway_calls_per_month": MAX_SIDEWAY_PER_MONTH,
                 "transaction_cost_bps": 5,

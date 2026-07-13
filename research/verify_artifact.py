@@ -110,6 +110,13 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
 
     performance = artifact.get("performance", {})
     rankings = performance.get("model_rankings", []) if isinstance(performance, dict) else []
+    models_payload = artifact.get("models", {})
+    availability = models_payload.get("availability", []) if isinstance(models_payload, dict) else []
+    required_oos_models = {
+        str(row["model"])
+        for row in availability
+        if row.get("available") and row.get("cadence") == "daily"
+    }
     for lane in ("Calendar", "Full Hybrid"):
         lane_rows = [row for row in rankings if row.get("lane") == lane]
         active = [row for row in lane_rows if row.get("status") == "active"]
@@ -120,6 +127,12 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
             raise AssertionError(f"{lane} model rankings must be sorted")
         if any("weighted_lcb" not in row or "ece" not in row for row in lane_rows):
             raise AssertionError(f"{lane} rankings are missing uncertainty or calibration metrics")
+        oos_by_model = {str(row["model"]): int(row.get("observations", 0)) for row in lane_rows}
+        missing_oos = sorted(required_oos_models - set(oos_by_model))
+        if missing_oos:
+            raise AssertionError(f"{lane} is missing OOS predictions for: {', '.join(missing_oos)}")
+        if any(oos_by_model[model] < 365 for model in required_oos_models):
+            raise AssertionError(f"{lane} contains an available daily model without a sufficient OOS history")
     for fold_key in ("calendar_folds", "full_hybrid_folds"):
         for fold in performance.get(fold_key, []):
             train_end = pd.Timestamp(fold["train_end"])
@@ -128,6 +141,14 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
             test_start = pd.Timestamp(fold["test_start"])
             if not (train_end < calibration_fit_end < policy_start < test_start):
                 raise AssertionError(f"invalid nested walk-forward ordering in {fold_key}: {fold.get('fold')}")
+            weights = [float(value) for value in fold.get("weights", [])]
+            members = fold.get("members", [])
+            if fold.get("stacking_method") != "nonnegative-simplex-oof":
+                raise AssertionError(f"invalid stacking method in {fold_key}: {fold.get('fold')}")
+            if not weights or len(weights) != len(members) or any(value < 0 for value in weights):
+                raise AssertionError(f"invalid stacking weights in {fold_key}: {fold.get('fold')}")
+            if abs(sum(weights) - 1.0) > 1e-6:
+                raise AssertionError(f"stacking weights do not sum to one in {fold_key}: {fold.get('fold')}")
 
     patterns = artifact.get("patterns", {})
     if not isinstance(patterns, dict):
