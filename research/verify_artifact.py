@@ -91,6 +91,23 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
         elif row.get("status") == "pending":
             pending += 1
 
+    events = state.get("event_evaluations", [])
+    if not isinstance(events, list):
+        raise AssertionError("event evaluation ledger must be a list")
+    event_ids = [str(row.get("event_id")) for row in events if isinstance(row, dict)]
+    if len(event_ids) != len(set(event_ids)):
+        raise AssertionError("event evaluation IDs must be unique")
+    for event in events:
+        if not isinstance(event, dict):
+            raise AssertionError("event evaluation row must be an object")
+        maturity = pd.Timestamp(event["matures_after"]).normalize()
+        if maturity <= latest_closed and not event.get("evaluated_at"):
+            raise AssertionError(f"mature event was not evaluated: {event.get('event_id')}")
+        if event.get("status") not in {"pending", "matched", "not-matched"}:
+            raise AssertionError(f"invalid event status: {event.get('event_id')}")
+        if event.get("evaluated_at") and float(event.get("score")) not in {0.0, 1.0}:
+            raise AssertionError(f"invalid event score: {event.get('event_id')}")
+
     performance = artifact.get("performance", {})
     rankings = performance.get("model_rankings", []) if isinstance(performance, dict) else []
     for lane in ("Calendar", "Full Hybrid"):
@@ -101,6 +118,16 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
         ranks = [int(row["rank"]) for row in lane_rows]
         if ranks != sorted(ranks):
             raise AssertionError(f"{lane} model rankings must be sorted")
+        if any("weighted_lcb" not in row or "ece" not in row for row in lane_rows):
+            raise AssertionError(f"{lane} rankings are missing uncertainty or calibration metrics")
+    for fold_key in ("calendar_folds", "full_hybrid_folds"):
+        for fold in performance.get(fold_key, []):
+            train_end = pd.Timestamp(fold["train_end"])
+            calibration_fit_end = pd.Timestamp(fold["calibration_fit_end"])
+            policy_start = pd.Timestamp(fold["policy_start"])
+            test_start = pd.Timestamp(fold["test_start"])
+            if not (train_end < calibration_fit_end < policy_start < test_start):
+                raise AssertionError(f"invalid nested walk-forward ordering in {fold_key}: {fold.get('fold')}")
 
     patterns = artifact.get("patterns", {})
     if not isinstance(patterns, dict):
@@ -124,6 +151,9 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
     state_digests = {str(row["forecast_id"]): official_forecast_digest(row) for row in forecasts}
     if artifact_digests != state_digests:
         raise AssertionError("published artifact and production ledger disagree")
+    artifact_events = learning.get("event_evaluation_ledger", []) if isinstance(learning, dict) else []
+    if {str(row.get("event_id")) for row in artifact_events} != set(event_ids):
+        raise AssertionError("published event ledger and production state disagree")
     selection_history = state.get("selection_history", [])
     if not selection_history or selection_history[-1].get("as_of_closed") != latest_closed.strftime("%Y-%m-%d"):
         raise AssertionError("daily selection snapshot is missing")
@@ -132,6 +162,7 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
         "official_forecasts": len(forecasts),
         "evaluated": evaluated,
         "pending": pending,
+        "event_evaluations": len(events),
         "selection_snapshots": len(selection_history),
     }
 

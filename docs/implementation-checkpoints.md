@@ -74,7 +74,7 @@ Acceptance gate:
 
 ## Checkpoint 2: Evaluation, Calibration, Events, and Governance
 
-Status: pending
+Status: complete
 
 Files owned by this checkpoint:
 

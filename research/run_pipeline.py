@@ -33,10 +33,20 @@ from research.data_sources import (
     refresh_intraday_market,
     source_lineage,
 )
+from research.evaluation import (
+    class_drift_rows,
+    class_metric_rows,
+    confidence_risk_rows,
+    confusion_rows,
+    feature_drift_rows,
+    grouped_performance_rows,
+    page_hinkley_alarm,
+)
 from research.learning import (
     append_official_forecast,
     apply_live_model_ranking,
     apply_live_pattern_ranking,
+    grade_event_state,
     grade_learning_state,
     learning_summary,
     load_learning_state,
@@ -253,17 +263,19 @@ def main() -> None:
         len(groups["sequence_full_base"]),
         args.deep,
     )
-    calendar.model_metrics = apply_live_model_ranking(calendar.model_metrics, learning_state, "Calendar")
-    full.model_metrics = apply_live_model_ranking(full.model_metrics, learning_state, "Full Hybrid")
+    calendar.model_metrics = apply_live_model_ranking(
+        calendar.model_metrics, learning_state, "Calendar", as_of_closed=latest_closed,
+    )
+    full.model_metrics = apply_live_model_ranking(
+        full.model_metrics, learning_state, "Full Hybrid", as_of_closed=latest_closed,
+    )
     calendar_preferred = calendar.model_metrics.loc[
         (calendar.model_metrics["status"] == "active")
-        & (calendar.model_metrics["expectancy"] > 0)
         & ~calendar.model_metrics["model"].str.contains("Ensemble"),
         "model",
     ].tolist()
     full_preferred = full.model_metrics.loc[
         (full.model_metrics["status"] == "active")
-        & (full.model_metrics["expectancy"] > 0)
         & ~full.model_metrics["model"].str.contains("Ensemble"),
         "model",
     ].tolist()
@@ -277,7 +289,9 @@ def main() -> None:
         args.deep,
         policy_history=calendar.forecasts,
         preferred_models=calendar_preferred,
-        pattern_adjuster=lambda registry: apply_live_pattern_ranking(registry, learning_state, "Calendar"),
+        pattern_adjuster=lambda registry: apply_live_pattern_ranking(
+            registry, learning_state, "Calendar", as_of_closed=latest_closed,
+        ),
     )
     full_future, full_selection, full_registry = fit_latest_forecasts(
         frame,
@@ -290,7 +304,9 @@ def main() -> None:
         max_future_days=1,
         policy_history=full.forecasts,
         preferred_models=full_preferred,
-        pattern_adjuster=lambda registry: apply_live_pattern_ranking(registry, learning_state, "Full Hybrid"),
+        pattern_adjuster=lambda registry: apply_live_pattern_ranking(
+            registry, learning_state, "Full Hybrid", as_of_closed=latest_closed,
+        ),
     )
     calendar_selection = _enrich_selection(calendar_selection, calendar.model_metrics)
     full_selection = _enrich_selection(full_selection, full.model_metrics)
@@ -312,6 +328,7 @@ def main() -> None:
             latest_closed.strftime("%Y-%m-%d"),
             serialize_frame(full_selection, date_columns=()),
         )
+    evaluated_events = grade_event_state(learning_state, market, latest_closed, run_at)
     record_selection_snapshot(
         learning_state,
         latest_closed.strftime("%Y-%m-%d"),
@@ -328,6 +345,28 @@ def main() -> None:
         _monthly_metrics(calendar.forecasts, "Calendar"),
         _monthly_metrics(full.forecasts, "Full Hybrid"),
     ], ignore_index=True)
+    class_metrics = pd.concat([
+        class_metric_rows(calendar.forecasts, "Calendar"),
+        class_metric_rows(full.forecasts, "Full Hybrid"),
+    ], ignore_index=True)
+    confusion = pd.concat([
+        confusion_rows(calendar.forecasts, "Calendar"),
+        confusion_rows(full.forecasts, "Full Hybrid"),
+    ], ignore_index=True)
+    confidence_risk = pd.concat([
+        confidence_risk_rows(calendar.forecasts, "Calendar"),
+        confidence_risk_rows(full.forecasts, "Full Hybrid"),
+    ], ignore_index=True)
+    grouped_performance = pd.concat([
+        grouped_performance_rows(calendar.forecasts, frame, "Calendar"),
+        grouped_performance_rows(full.forecasts, frame, "Full Hybrid"),
+    ], ignore_index=True)
+    feature_drift = feature_drift_rows(frame, groups["full"])
+    class_drift = class_drift_rows(frame)
+    performance_drift = {
+        "calendar": page_hinkley_alarm(1 - calendar.forecasts["score"].dropna().to_numpy(dtype=float)),
+        "full_hybrid": page_hinkley_alarm(1 - full.forecasts["score"].dropna().to_numpy(dtype=float)),
+    }
     target_accuracy = 0.70
     eligible_metrics = all_metrics[(all_metrics["expectancy"] > 0) & (all_metrics["coverage"] >= 0.8)]
     achieved = eligible_metrics["directional_accuracy"].max() if not eligible_metrics.empty else 0
@@ -407,11 +446,16 @@ def main() -> None:
                 "rolling_train_days": 1460,
                 "purge_days": 5,
                 "calibration_days": 90,
+                "calibration_partition": "first 67% calibrator fit; final 33% policy and ensemble selection",
+                "calibration_methods": "identity, sigmoid, temperature, isotonic when sample-gated",
                 "maximum_no_calls_per_month": 6,
                 "maximum_sideway_calls_per_month": MAX_SIDEWAY_PER_MONTH,
                 "transaction_cost_bps": 5,
                 "daily_evaluation_utc": "03:20",
                 "official_forecasts_are_immutable": True,
+                "daily_and_event_grades_are_independent": True,
+                "minimum_live_grades_for_promotion": 20,
+                "production_promotion_cadence": "monthly",
             },
         },
         "health": {
@@ -443,6 +487,10 @@ def main() -> None:
             "full_hybrid_reliability": serialize_frame(reliability_bins(full.forecasts), date_columns=()),
             "calendar_no_calls": serialize_frame(calendar.no_call_summary, date_columns=()),
             "full_hybrid_no_calls": serialize_frame(full.no_call_summary, date_columns=()),
+            "class_metrics": serialize_frame(class_metrics, date_columns=()),
+            "confusion_matrix": serialize_frame(confusion, date_columns=()),
+            "confidence_risk": serialize_frame(confidence_risk, date_columns=()),
+            "grouped": serialize_frame(grouped_performance, date_columns=()),
         },
         "models": {
             "availability": _availability(args.deep),
@@ -461,12 +509,27 @@ def main() -> None:
         "research": {
             "correlation_heatmap": serialize_frame(feature_heatmap(frame, groups), date_columns=()),
             "feature_groups": {key: value for key, value in groups.items() if not key.endswith("_base") and not key.startswith("sequence")},
+            "drift": {
+                "features": serialize_frame(feature_drift, date_columns=()),
+                "classes": serialize_frame(class_drift, date_columns=()),
+                "performance": performance_drift,
+            },
+            "event_definitions": {
+                "window_days": 3,
+                "pivot_confirmation_days": 5,
+                "pump": "1D >= +4%, 3D >= +8%, or 5D >= +12%",
+                "dump": "1D <= -4%, 3D <= -8%, or 5D <= -12%",
+                "sideway_cluster": "three-day high-low range <= 2%",
+                "daily_grade_is_independent": True,
+            },
         },
         "learning": {
             "summary": learning_summary(learning_state),
             "official_forecast_ledger": learning_state.get("forecasts", []),
+            "event_evaluation_ledger": learning_state.get("event_evaluations", []),
             "selection_history": learning_state.get("selection_history", []),
             "evaluated_this_run": evaluated_forecasts,
+            "events_evaluated_this_run": evaluated_events,
             "bootstrapped_this_run": bootstrapped_forecasts,
         },
     }
@@ -486,6 +549,7 @@ def main() -> None:
         "achieved_directional_accuracy": round(float(achieved), 4),
         "target_reached": bool(achieved >= target_accuracy),
         "evaluated_forecasts": evaluated_forecasts,
+        "evaluated_events": evaluated_events,
         "official_ledger_rows": len(learning_state.get("forecasts", [])),
     }, indent=2))
 

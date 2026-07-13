@@ -24,6 +24,12 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from research.data_sources import PREPUBLISHED_AT, availability_series
+from research.evaluation import (
+    ProbabilityCalibrator,
+    conservative_beta_lower_bound,
+    moving_block_confidence_intervals,
+    multiclass_diagnostics,
+)
 
 
 CLASS_NAMES = ("down", "sideway", "up")
@@ -54,6 +60,8 @@ class CandidatePrediction:
     calibration_score: float
     calibration_log_loss: float
     weight: float
+    calibration_method: str = "uncalibrated"
+    calibration_selection_log_loss: float = math.nan
 
 
 @dataclass
@@ -803,6 +811,10 @@ def select_decision_policy(
 
 def build_pattern_registry(train: pd.DataFrame, minimum_occurrences: int = 8) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
+    direction_baselines = {
+        direction: float(np.mean([grade_forecast(direction, value)[1] for value in train["daily_return"].dropna()]))
+        for direction in CLASS_NAMES
+    }
     for pattern_id, (expression, label) in PATTERN_DEFINITIONS.items():
         try:
             mask = train.eval(expression, engine="python").fillna(False).astype(bool)
@@ -817,6 +829,10 @@ def build_pattern_registry(train: pd.DataFrame, minimum_occurrences: int = 8) ->
             statuses = [grade[0] for grade in grades]
             smoothed_score = float((scores.sum() + 2.0) / (len(scores) + 4.0))
             exact_accuracy = float((np.array(statuses) == "correct").mean())
+            baseline = direction_baselines[direction]
+            standard_error = math.sqrt(max(1e-8, baseline * (1 - baseline) / max(1, len(scores))))
+            z_score = (float(scores.mean()) - baseline) / standard_error
+            p_value = float(0.5 * math.erfc(z_score / math.sqrt(2)))
             strategy = np.where(
                 direction == "up",
                 sample["daily_return"].to_numpy() - TRADING_COST,
@@ -829,7 +845,14 @@ def build_pattern_registry(train: pd.DataFrame, minimum_occurrences: int = 8) ->
                 "direction": direction,
                 "occurrences": int(len(sample)),
                 "weighted_accuracy": smoothed_score,
+                "weighted_lcb": conservative_beta_lower_bound(
+                    scores,
+                    baseline,
+                    prior_strength=12.0,
+                ),
                 "exact_accuracy": exact_accuracy,
+                "baseline_score": baseline,
+                "p_value": p_value,
                 "expectancy": float(np.mean(strategy)),
                 "last_seen": sample["date"].max(),
                 "examples": sample.sort_values("date").tail(6)["date"].dt.strftime("%Y-%m-%d").tolist(),
@@ -837,9 +860,20 @@ def build_pattern_registry(train: pd.DataFrame, minimum_occurrences: int = 8) ->
     registry = pd.DataFrame(rows)
     if registry.empty:
         return registry
-    registry["eligible"] = registry["occurrences"] >= minimum_occurrences
+    order = registry["p_value"].sort_values().index
+    ranked_p = registry.loc[order, "p_value"].to_numpy(dtype=float)
+    adjusted = np.minimum.accumulate(
+        (ranked_p * len(ranked_p) / np.arange(1, len(ranked_p) + 1))[::-1],
+    )[::-1]
+    registry["false_discovery_q"] = 1.0
+    registry.loc[order, "false_discovery_q"] = np.clip(adjusted, 0, 1)
+    registry["eligible"] = (
+        (registry["occurrences"] >= minimum_occurrences)
+        & (registry["weighted_accuracy"] >= 0.36)
+        & ((registry["false_discovery_q"] <= 0.25) | (registry["occurrences"] >= 40))
+    )
     registry["rank_score"] = (
-        registry["weighted_accuracy"] * np.log1p(registry["occurrences"])
+        registry["weighted_lcb"] * np.log1p(registry["occurrences"])
         + np.clip(registry["expectancy"], -0.03, 0.03) * 8
     )
     registry = registry.sort_values(["eligible", "rank_score", "occurrences"], ascending=False).reset_index(drop=True)
@@ -865,43 +899,14 @@ def pattern_probabilities(frame: pd.DataFrame, registry: pd.DataFrame) -> np.nda
         if not mask.any():
             continue
         action_index = CLASS_TO_INDEX[str(rule["direction"])]
-        weight = max(0.01, float(rule["weighted_accuracy"]) - 0.25) * math.log1p(float(rule["occurrences"]))
+        conservative_accuracy = float(rule.get("weighted_lcb", rule["weighted_accuracy"]))
+        baseline = float(rule.get("baseline_score", 0.25))
+        weight = max(0.01, conservative_accuracy - baseline + 0.05) * math.log1p(float(rule["occurrences"]))
         action_votes[mask, action_index] += weight
     totals = action_votes.sum(axis=1)
     valid = totals > 0
     probabilities[valid] = (action_votes[valid] + 0.25) / (totals[valid, None] + 0.75)
     return probabilities
-
-
-class ProbabilityCalibrator:
-    def __init__(self) -> None:
-        self.models: list[LogisticRegression | None] = []
-
-    def fit(self, probabilities: np.ndarray, labels: np.ndarray) -> "ProbabilityCalibrator":
-        self.models = []
-        clipped = np.clip(probabilities, 1e-5, 1 - 1e-5)
-        for class_index in range(3):
-            binary = (labels == class_index).astype(int)
-            if np.unique(binary).size < 2:
-                self.models.append(None)
-                continue
-            feature = np.log(clipped[:, class_index] / (1 - clipped[:, class_index])).reshape(-1, 1)
-            model = LogisticRegression(C=0.5, max_iter=500)
-            model.fit(feature, binary)
-            self.models.append(model)
-        return self
-
-    def transform(self, probabilities: np.ndarray) -> np.ndarray:
-        clipped = np.clip(probabilities, 1e-5, 1 - 1e-5)
-        calibrated = np.zeros_like(clipped)
-        for class_index, model in enumerate(self.models):
-            if model is None:
-                calibrated[:, class_index] = clipped[:, class_index]
-                continue
-            feature = np.log(clipped[:, class_index] / (1 - clipped[:, class_index])).reshape(-1, 1)
-            calibrated[:, class_index] = model.predict_proba(feature)[:, 1]
-        row_sum = calibrated.sum(axis=1, keepdims=True)
-        return np.divide(calibrated, row_sum, out=np.full_like(calibrated, 1 / 3), where=row_sum > 0)
 
 
 def _align_probabilities(model: object, probabilities: np.ndarray) -> np.ndarray:
@@ -1008,7 +1013,9 @@ def monthly_purged_folds(
     oos_start: pd.Timestamp = OOS_START,
     purge_days: int = 5,
     calibration_days: int = 90,
-    rolling_days: int = 1460,
+    rolling_days: int | None = 1460,
+    horizon_days: int = 1,
+    embargo_days: int = 0,
 ) -> list[Fold]:
     folds: list[Fold] = []
     labeled = frame[frame["target"].notna()].copy()
@@ -1020,8 +1027,12 @@ def monthly_purged_folds(
         test_index = labeled.index[test_mask].to_numpy()
         if len(test_index) == 0:
             continue
-        train_cutoff = month_start - pd.Timedelta(days=purge_days)
-        train_start = train_cutoff - pd.Timedelta(days=rolling_days)
+        effective_gap = max(purge_days, horizon_days, embargo_days)
+        train_cutoff = month_start - pd.Timedelta(days=effective_gap)
+        train_start = (
+            train_cutoff - pd.Timedelta(days=rolling_days)
+            if rolling_days is not None else labeled["date"].min()
+        )
         eligible = labeled[labeled["date"].between(train_start, train_cutoff, inclusive="left")]
         calibration_start = train_cutoff - pd.Timedelta(days=calibration_days)
         calibration_index = eligible.index[eligible["date"] >= calibration_start].to_numpy()
@@ -1082,6 +1093,11 @@ def _decision_rows(
                 strategy_return = -float(daily_return) - TRADING_COST
             else:
                 strategy_return = 0.0
+        directional_hit = bool(
+            (direction == "up" and daily_return > 0)
+            or (direction == "down" and daily_return < 0)
+            or (direction == "sideway" and abs(float(daily_return)) <= SIDEWAY_LIMIT)
+        )
         records.append({
             "date": pd.Timestamp(date),
             "model": model,
@@ -1090,6 +1106,8 @@ def _decision_rows(
             "status": status,
             "score": score,
             "daily_return": float(daily_return),
+            "actual_class": int(direction_label(float(daily_return))),
+            "directional_hit": directional_hit,
             "strategy_return": strategy_return,
             "prob_down": float(probability[0]),
             "prob_sideway": float(probability[1]),
@@ -1143,11 +1161,7 @@ def _metric_summary(predictions: pd.DataFrame) -> pd.DataFrame:
             continue
         exact_accuracy = float((calls["status"] == "correct").mean())
         weighted_accuracy = float(calls["score"].mean())
-        sign_hit = (
-            ((calls["forecast"] == "up") & (calls["daily_return"] > 0))
-            | ((calls["forecast"] == "down") & (calls["daily_return"] < 0))
-            | ((calls["forecast"] == "sideway") & (calls["daily_return"].abs() <= SIDEWAY_LIMIT))
-        )
+        sign_hit = calls["directional_hit"].astype(bool)
         strategy = calls["strategy_return"].fillna(0).to_numpy(dtype=float)
         equity = np.cumprod(1 + strategy)
         running_peak = np.maximum.accumulate(equity)
@@ -1156,9 +1170,16 @@ def _metric_summary(predictions: pd.DataFrame) -> pd.DataFrame:
         negative = -strategy[strategy < 0].sum()
         sharpe = float(np.mean(strategy) / np.std(strategy, ddof=1) * np.sqrt(365)) if len(strategy) > 2 and np.std(strategy, ddof=1) > 0 else 0.0
         probability_columns = calls[["prob_down", "prob_sideway", "prob_up"]].to_numpy()
-        actual = calls["daily_return"].map(direction_label).astype(int).to_numpy()
+        actual = calls["actual_class"].astype(int).to_numpy()
         brier = float(np.mean(np.sum((probability_columns - np.eye(3)[actual]) ** 2, axis=1)))
-        rows.append({
+        probability_diagnostics = multiclass_diagnostics(probability_columns, actual)
+        positions = calls["forecast"].map({"down": -1.0, "sideway": 0.0, "up": 1.0}).to_numpy(dtype=float)
+        turnover = float(np.abs(np.diff(positions)).mean()) if len(positions) > 1 else 0.0
+        intervals = moving_block_confidence_intervals(
+            calls,
+            random_state=42 + sum(ord(character) for character in str(model)),
+        )
+        row = {
             "model": model,
             "observations": int(len(group)),
             "calls": int(len(calls)),
@@ -1168,13 +1189,19 @@ def _metric_summary(predictions: pd.DataFrame) -> pd.DataFrame:
             "weighted_accuracy": weighted_accuracy,
             "directional_accuracy": float(sign_hit.mean()),
             "balanced_accuracy": float(balanced_accuracy_score(actual, probability_columns.argmax(axis=1))),
+            "mcc": probability_diagnostics["mcc"],
             "brier": brier,
+            "log_loss": probability_diagnostics["log_loss"],
+            "ece": probability_diagnostics["ece"],
             "sharpe": sharpe,
             "profit_factor": float(positive / negative) if negative > 0 else math.inf,
             "max_drawdown": float(drawdown.min()) if len(drawdown) else 0.0,
             "expectancy": float(strategy.mean()) if len(strategy) else 0.0,
             "net_return": float(equity[-1] - 1) if len(equity) else 0.0,
-        })
+            "turnover": turnover,
+        }
+        row.update(intervals)
+        rows.append(row)
     metrics = pd.DataFrame(rows)
     if metrics.empty:
         return metrics
@@ -1218,6 +1245,11 @@ def run_walk_forward(
         train = frame.loc[fold.train_index].copy()
         calibration = frame.loc[fold.calibration_index].copy()
         test = frame.loc[fold.test_index].copy()
+        calibration_split = max(30, min(len(calibration) - 20, int(len(calibration) * 0.67)))
+        calibration_fit = calibration.iloc[:calibration_split].copy()
+        policy_validation = calibration.iloc[calibration_split:].copy()
+        if len(calibration_fit) < 30 or len(policy_validation) < 15:
+            continue
         matrix = reward_matrix(train)
         candidates: list[CandidatePrediction] = []
         model_specs: list[tuple[str, object, Sequence[str]]] = [
@@ -1254,51 +1286,61 @@ def run_walk_forward(
             fitted = clone(model)
             try:
                 fitted.fit(train[list(model_columns)], train["target"].astype(int))
-                calibration_raw = _align_probabilities(fitted, fitted.predict_proba(calibration[list(model_columns)]))
+                calibration_fit_raw = _align_probabilities(
+                    fitted, fitted.predict_proba(calibration_fit[list(model_columns)]),
+                )
+                policy_raw = _align_probabilities(
+                    fitted, fitted.predict_proba(policy_validation[list(model_columns)]),
+                )
                 test_raw = _align_probabilities(fitted, fitted.predict_proba(test[list(model_columns)]))
-                calibrator = ProbabilityCalibrator().fit(calibration_raw, calibration["target"].astype(int).to_numpy())
-                calibration_probabilities = calibrator.transform(calibration_raw)
+                calibrator = ProbabilityCalibrator().fit(
+                    calibration_fit_raw, calibration_fit["target"].astype(int).to_numpy(),
+                )
+                calibration_probabilities = calibrator.transform(policy_raw)
                 test_probabilities = calibrator.transform(test_raw)
             except Exception:
                 continue
             calibration_rows = _decision_rows(
-                calibration["date"], calibration_probabilities, calibration["daily_return"], matrix,
+                policy_validation["date"], calibration_probabilities, policy_validation["daily_return"], matrix,
                 name, fold.fold_id, False,
             )
             calibration_score = float(pd.DataFrame(calibration_rows)["score"].mean())
-            calibration_loss = _safe_log_loss(calibration["target"].astype(int).to_numpy(), calibration_probabilities)
+            calibration_loss = _safe_log_loss(
+                policy_validation["target"].astype(int).to_numpy(), calibration_probabilities,
+            )
             quality = max(0.015, calibration_score - 0.25) * math.exp(-max(0.0, calibration_loss - 0.8))
             candidates.append(CandidatePrediction(
                 name, calibration_probabilities, test_probabilities, calibration_score, calibration_loss, quality,
+                calibrator.diagnostics_.method, calibrator.diagnostics_.selection_log_loss,
             ))
 
-        registry_train = pd.concat([train, calibration], ignore_index=True)
-        latest_registry = build_pattern_registry(registry_train)
-        pattern_calibration = pattern_probabilities(calibration, latest_registry)
+        training_registry = build_pattern_registry(train)
+        latest_registry = build_pattern_registry(pd.concat([train, calibration], ignore_index=True))
+        pattern_calibration = pattern_probabilities(policy_validation, training_registry)
         pattern_test = pattern_probabilities(test, latest_registry)
         pattern_rows = _decision_rows(
-            calibration["date"], pattern_calibration, calibration["daily_return"], matrix,
+            policy_validation["date"], pattern_calibration, policy_validation["daily_return"], matrix,
             "Pattern Registry", fold.fold_id, False,
         )
         pattern_score = float(pd.DataFrame(pattern_rows)["score"].mean())
         candidates.append(CandidatePrediction(
             "Pattern Registry", pattern_calibration, pattern_test, pattern_score,
-            _safe_log_loss(calibration["target"].astype(int).to_numpy(), pattern_calibration),
+            _safe_log_loss(policy_validation["target"].astype(int).to_numpy(), pattern_calibration),
             max(0.01, pattern_score - 0.25),
         ))
 
         try:
             analog_calibration, analog_test = _fit_analog_probabilities(
-                train, calibration, test, analog_columns,
+                train, policy_validation, test, analog_columns,
             )
             analog_rows = _decision_rows(
-                calibration["date"], analog_calibration, calibration["daily_return"], matrix,
+                policy_validation["date"], analog_calibration, policy_validation["daily_return"], matrix,
                 "Historical Analog", fold.fold_id, False,
             )
             analog_score = float(pd.DataFrame(analog_rows)["score"].mean())
             candidates.append(CandidatePrediction(
                 "Historical Analog", analog_calibration, analog_test, analog_score,
-                _safe_log_loss(calibration["target"].astype(int).to_numpy(), analog_calibration),
+                _safe_log_loss(policy_validation["target"].astype(int).to_numpy(), analog_calibration),
                 max(0.01, analog_score - 0.25),
             ))
         except Exception:
@@ -1320,15 +1362,15 @@ def run_walk_forward(
             past_returns = np.concatenate(prior_policy_returns, axis=0)[-365:]
             past_dates = np.concatenate(prior_policy_dates, axis=0)[-365:]
             policy_probabilities = np.concatenate([past_probabilities, ensemble_calibration], axis=0)
-            policy_returns = np.concatenate([past_returns, calibration["daily_return"].to_numpy(dtype=float)])
-            policy_dates = np.concatenate([past_dates, calibration["date"].to_numpy()], axis=0)
+            policy_returns = np.concatenate([past_returns, policy_validation["daily_return"].to_numpy(dtype=float)])
+            policy_dates = np.concatenate([past_dates, policy_validation["date"].to_numpy()], axis=0)
             policy_mode, sideway_penalty, policy_diagnostics = select_decision_policy(
                 policy_probabilities, policy_returns, matrix, policy_dates,
             )
         else:
             policy_mode, sideway_penalty = "probability", 1.0
             _, _, policy_diagnostics = select_decision_policy(
-                ensemble_calibration, calibration["daily_return"], matrix, calibration["date"],
+                ensemble_calibration, policy_validation["daily_return"], matrix, policy_validation["date"],
             )
         ensemble_rows = _decision_rows(
             test["date"], ensemble_probabilities, test["daily_return"], matrix,
@@ -1352,7 +1394,9 @@ def run_walk_forward(
             "fold": fold.fold_id,
             "train_start": train["date"].min(),
             "train_end": train["date"].max(),
-            "calibration_end": calibration["date"].max(),
+            "calibration_fit_end": calibration_fit["date"].max(),
+            "policy_start": policy_validation["date"].min(),
+            "calibration_end": policy_validation["date"].max(),
             "test_start": test["date"].min(),
             "test_end": test["date"].max(),
             "calls": int(len(calls)),
@@ -1362,6 +1406,9 @@ def run_walk_forward(
             "expectancy": float(calls["strategy_return"].mean()) if len(calls) else math.nan,
             "members": [candidate.name for candidate in gated],
             "weights": [float(value) for value in weights],
+            "calibration_methods": {
+                candidate.name: candidate.calibration_method for candidate in candidates
+            },
             "policy_mode": policy_mode,
             "sideway_penalty": sideway_penalty,
             "policy_calibration_directional_accuracy": policy_diagnostics["directional_accuracy"],
@@ -1546,8 +1593,13 @@ def fit_latest_forecasts(
     training_start = training_end - pd.Timedelta(days=1460)
     train = labeled[labeled["date"].between(training_start, training_end, inclusive="left")].copy()
     calibration = labeled[labeled["date"].between(calibration_start, latest_market_date)].copy()
+    calibration_split = max(30, min(len(calibration) - 20, int(len(calibration) * 0.67)))
+    calibration_fit = calibration.iloc[:calibration_split].copy()
+    policy_validation = calibration.iloc[calibration_split:].copy()
+    if len(calibration_fit) < 30 or len(policy_validation) < 15:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     development = pd.concat([train, calibration], ignore_index=True)
-    matrix = reward_matrix(development)
+    matrix = reward_matrix(train)
     candidates: list[CandidatePrediction] = []
     future_probabilities_by_model: dict[str, np.ndarray] = {}
     model_specs: list[tuple[str, object, Sequence[str]]] = [
@@ -1577,9 +1629,16 @@ def fit_latest_forecasts(
         initial = clone(model)
         try:
             initial.fit(train[list(model_columns)], train["target"].astype(int))
-            calibration_raw = _align_probabilities(initial, initial.predict_proba(calibration[list(model_columns)]))
-            calibrator = ProbabilityCalibrator().fit(calibration_raw, calibration["target"].astype(int).to_numpy())
-            calibration_probabilities = calibrator.transform(calibration_raw)
+            calibration_fit_raw = _align_probabilities(
+                initial, initial.predict_proba(calibration_fit[list(model_columns)]),
+            )
+            policy_raw = _align_probabilities(
+                initial, initial.predict_proba(policy_validation[list(model_columns)]),
+            )
+            calibrator = ProbabilityCalibrator().fit(
+                calibration_fit_raw, calibration_fit["target"].astype(int).to_numpy(),
+            )
+            calibration_probabilities = calibrator.transform(policy_raw)
             final_model = clone(model)
             final_model.fit(development[list(model_columns)], development["target"].astype(int))
             future_raw = _align_probabilities(final_model, final_model.predict_proba(future[list(model_columns)]))
@@ -1587,31 +1646,35 @@ def fit_latest_forecasts(
         except Exception:
             continue
         calibration_rows = _decision_rows(
-            calibration["date"], calibration_probabilities, calibration["daily_return"], matrix,
+            policy_validation["date"], calibration_probabilities, policy_validation["daily_return"], matrix,
             name, "latest", False,
         )
         calibration_score = float(pd.DataFrame(calibration_rows)["score"].mean())
-        calibration_loss = _safe_log_loss(calibration["target"].astype(int).to_numpy(), calibration_probabilities)
+        calibration_loss = _safe_log_loss(
+            policy_validation["target"].astype(int).to_numpy(), calibration_probabilities,
+        )
         quality = max(0.015, calibration_score - 0.25) * math.exp(-max(0.0, calibration_loss - 0.8))
         candidates.append(CandidatePrediction(
             name, calibration_probabilities, future_probabilities, calibration_score, calibration_loss, quality,
+            calibrator.diagnostics_.method, calibrator.diagnostics_.selection_log_loss,
         ))
         future_probabilities_by_model[name] = future_probabilities
 
-    training_registry = build_pattern_registry(train)
+    analog_history = pd.concat([train, calibration_fit], ignore_index=True)
+    training_registry = build_pattern_registry(analog_history)
     final_registry = build_pattern_registry(development)
     if pattern_adjuster is not None:
         final_registry = pattern_adjuster(final_registry)
-    pattern_calibration = pattern_probabilities(calibration, training_registry)
+    pattern_calibration = pattern_probabilities(policy_validation, training_registry)
     pattern_future = pattern_probabilities(future, final_registry)
     pattern_rows = _decision_rows(
-        calibration["date"], pattern_calibration, calibration["daily_return"], matrix,
+        policy_validation["date"], pattern_calibration, policy_validation["daily_return"], matrix,
         "Pattern Registry", "latest", False,
     )
     pattern_score = float(pd.DataFrame(pattern_rows)["score"].mean())
     candidates.append(CandidatePrediction(
         "Pattern Registry", pattern_calibration, pattern_future, pattern_score,
-        _safe_log_loss(calibration["target"].astype(int).to_numpy(), pattern_calibration),
+        _safe_log_loss(policy_validation["target"].astype(int).to_numpy(), pattern_calibration),
         max(0.01, pattern_score - 0.25),
     ))
     future_probabilities_by_model["Pattern Registry"] = pattern_future
@@ -1619,16 +1682,16 @@ def fit_latest_forecasts(
     analog_details: list[list[dict[str, object]]] = [[] for _ in range(len(future))]
     try:
         analog_calibration, analog_future, analog_details = _analog_forecast_bundle(
-            train, calibration, future, analog_columns,
+            analog_history, policy_validation, future, analog_columns,
         )
         analog_rows = _decision_rows(
-            calibration["date"], analog_calibration, calibration["daily_return"], matrix,
+            policy_validation["date"], analog_calibration, policy_validation["daily_return"], matrix,
             "Historical Analog", "latest", False,
         )
         analog_score = float(pd.DataFrame(analog_rows)["score"].mean())
         candidates.append(CandidatePrediction(
             "Historical Analog", analog_calibration, analog_future, analog_score,
-            _safe_log_loss(calibration["target"].astype(int).to_numpy(), analog_calibration),
+            _safe_log_loss(policy_validation["target"].astype(int).to_numpy(), analog_calibration),
             max(0.01, analog_score - 0.25),
         ))
         future_probabilities_by_model["Historical Analog"] = analog_future
@@ -1651,8 +1714,8 @@ def fit_latest_forecasts(
     )
     ensemble = sum(weight * future_probabilities_by_model[candidate.name] for weight, candidate in zip(weights, selected))
     policy_probabilities = ensemble_calibration
-    policy_returns = calibration["daily_return"].to_numpy(dtype=float)
-    policy_dates = calibration["date"].to_numpy()
+    policy_returns = policy_validation["daily_return"].to_numpy(dtype=float)
+    policy_dates = policy_validation["date"].to_numpy()
     if policy_history is not None and not policy_history.empty:
         history = policy_history.dropna(subset=["daily_return"]).tail(365)
         if not history.empty:
@@ -1718,6 +1781,8 @@ def fit_latest_forecasts(
             "lane": lane,
             "calibration_score": candidate.calibration_score,
             "calibration_log_loss": candidate.calibration_log_loss,
+            "calibration_method": candidate.calibration_method,
+            "calibration_selection_log_loss": candidate.calibration_selection_log_loss,
             "weight": selected_weights.get(candidate.name, 0.0),
             "status": "active" if candidate.name in selected_weights else "standby",
             "next_forecast": next_direction,
@@ -1777,7 +1842,8 @@ def feature_heatmap(frame: pd.DataFrame, feature_groups: dict[str, list[str]]) -
 def serialize_frame(
     frame: pd.DataFrame,
     date_columns: Iterable[str] = (
-        "date", "train_start", "train_end", "calibration_end", "test_start", "test_end", "last_seen",
+        "date", "train_start", "train_end", "calibration_fit_end", "policy_start", "calibration_end",
+        "test_start", "test_end", "last_seen",
         "index_BTC_available_at", "index_me_available_at", "astro_available_at", "available_at",
     ),
 ) -> list[dict[str, object]]:
