@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Activity, AlertTriangle, BarChart3, BrainCircuit, CalendarDays, ChartCandlestick, DatabaseZap, Menu, Radar, Radio, RefreshCw, ScanSearch, ShieldCheck, SlidersHorizontal, Target } from "lucide-react";
+import { Activity, AlertTriangle, BarChart3, BrainCircuit, CalendarDays, ChartCandlestick, DatabaseZap, Menu, Radar, RefreshCw, ScanSearch, ShieldCheck, SlidersHorizontal, Target } from "lucide-react";
 
 import { BacktestPanel } from "@/components/dashboard/backtest-panel";
 import { CorrelationHeatmap } from "@/components/dashboard/correlation-heatmap";
@@ -17,6 +17,7 @@ import { SystemPanel } from "@/components/dashboard/system-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { HeroOdyssey } from "@/components/ui/hero-odyssey";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -53,10 +54,6 @@ function aggregateLiveDay(rows: MarketRow[], latestClosed: string): MarketRow[] 
     close: bucket.at(-1)?.close ?? bucket[0].close,
     volume: bucket.reduce((sum, row) => sum + row.volume, 0),
   }));
-}
-
-function MetricCard({ label, value, detail, tone = "neutral" }: { label: string; value: string; detail: string; tone?: "positive" | "negative" | "neutral" }) {
-  return <Card className="py-0"><CardContent className="p-4"><p className="eyebrow">{label}</p><strong className={`metric-value mt-2 block ${tone === "positive" ? "text-emerald-400" : tone === "negative" ? "text-red-400" : ""}`}>{value}</strong><p className="mt-2 truncate text-[11px] text-muted-foreground">{detail}</p></CardContent></Card>;
 }
 
 export function DashboardShell() {
@@ -119,29 +116,43 @@ export function DashboardShell() {
     { label: "SIDEWAY", value: nextFull?.prob_sideway ?? 1 / 3, className: "[&>div]:bg-amber-300" },
     { label: "DOWN", value: nextFull?.prob_down ?? 1 / 3, className: "[&>div]:bg-red-400" },
   ];
+  const activeSection = navigation.find((item) => item.value === section)?.label ?? "Decision";
+  const heroMetrics = [
+    { label: "BTC live", value: formatUsd(latestMarket?.close), detail: `${live.data?.provider ?? data.meta.market_provider} · ${live.data ? "5-minute refresh" : "closed daily"}`, tone: (liveMove ?? 0) >= 0 ? "positive" as const : "negative" as const },
+    { label: "Current move", value: formatSignedPercent(liveMove), detail: "versus latest closed UTC candle", tone: (liveMove ?? 0) >= 0 ? "positive" as const : "negative" as const },
+    { label: "Best OOS model", value: formatPercent(bestModel?.directional_accuracy), detail: `${bestModel?.model ?? "No active model"} · PF ${bestModel?.profit_factor ? Number(bestModel.profit_factor).toFixed(2) : "—"}`, tone: (bestModel?.expectancy ?? 0) > 0 ? "positive" as const : "negative" as const },
+    { label: "System target", value: formatPercent(data.meta.target_directional_accuracy), detail: `current best ${formatPercent(data.meta.achieved_directional_accuracy)}`, tone: data.meta.target_reached ? "positive" as const : "warning" as const },
+    { label: "Next session", value: (nextFull?.forecast ?? "no-call").toUpperCase(), detail: nextFull ? `${formatDate(nextFull.date)} · expected ${formatPercent(nextFull.expected_score)}` : "awaiting research refresh" },
+  ];
   return (
-    <main className="mx-auto min-h-screen w-full max-w-[1680px] px-3 py-4 sm:px-6 lg:px-8">
-      <header className="mb-5 border-b border-border pb-5">
-        <div className="flex items-start justify-between gap-4">
-          <div><p className="eyebrow text-primary">ELAB / HYBRID QUANT RESEARCH</p><h1 className="mt-2 text-2xl font-semibold tracking-[-0.04em] sm:text-4xl">BTC Decision Console</h1><p className="mt-1 max-w-2xl text-sm text-muted-foreground">Private energy indices + Astro + patterns + calibrated machine learning, evaluated only through purged walk-forward data.</p></div>
-          <div className="flex items-center gap-2">
-            <div className="hidden items-center gap-2 lg:flex"><Badge variant="outline" className="h-9 gap-2"><Radio className={`size-3 ${live.data ? "text-emerald-400" : "text-amber-400"}`} />{live.data ? `${live.data.provider} · 5m` : "static daily"}</Badge><Badge variant="secondary" className="h-9 font-mono">closed UTC {data.meta.latest_closed_utc}</Badge></div>
-            <Sheet>
-            <SheetTrigger asChild><Button variant="outline" aria-label="Open section menu"><Menu /><span className="hidden sm:inline">{navigation.find((item) => item.value === section)?.label ?? "Sections"}</span></Button></SheetTrigger>
+    <main className="mx-auto min-h-screen w-full max-w-[1720px] px-2 py-2 sm:px-5 sm:py-4 lg:px-7">
+      <HeroOdyssey
+        eyebrow="ELAB / HYBRID QUANT RESEARCH"
+        title="BTC Decision Console"
+        description="Private energy indices, Astro timing, technical patterns and calibrated machine learning. Every production claim is measured on purged walk-forward data."
+        sectionLabel={activeSection}
+        live={Boolean(live.data)}
+        liveLabel={live.data ? `${live.data.provider} · 5 MIN` : "STATIC DAILY"}
+        latestClosed={data.meta.latest_closed_utc}
+        forecast={(nextFull?.forecast ?? "no-call").toUpperCase()}
+        forecastDate={nextFull ? formatDate(nextFull.date) : undefined}
+        forecastConfidence={nextFull?.expected_score}
+        metrics={heroMetrics}
+        nodes={[
+          { label: "Model", value: bestModel?.model ?? "Awaiting selection" },
+          { label: "Validation", value: "Purged walk-forward" },
+          { label: "Market feed", value: live.data?.provider ?? data.meta.market_provider },
+          { label: "Artifact", value: data.meta.generated_at.slice(0, 16).replace("T", " ") + " UTC" },
+        ]}
+        actions={(
+          <Sheet>
+            <SheetTrigger asChild><Button variant="outline" aria-label="Open section menu"><Menu /><span className="hidden sm:inline">{activeSection}</span></Button></SheetTrigger>
             <SheetContent side="right"><SheetHeader><SheetTitle>Research sections</SheetTitle></SheetHeader><nav className="mt-6 grid gap-2">{navigation.map((item) => <SheetClose asChild key={item.value}><Button variant={section === item.value ? "default" : "ghost"} className="justify-start" onClick={() => setSection(item.value)}><item.icon />{item.label}</Button></SheetClose>)}</nav></SheetContent>
-            </Sheet>
-          </div>
-        </div>
-      </header>
+          </Sheet>
+        )}
+      />
 
       <Tabs value={section} onValueChange={setSection}>
-        <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          <MetricCard label="BTC live" value={formatUsd(latestMarket?.close)} detail={`${live.data?.provider ?? data.meta.market_provider} · ${live.data ? "5-minute refresh" : "closed daily"}`} tone={(liveMove ?? 0) >= 0 ? "positive" : "negative"} />
-          <MetricCard label="Current move" value={formatSignedPercent(liveMove)} detail="versus latest closed UTC candle" tone={(liveMove ?? 0) >= 0 ? "positive" : "negative"} />
-          <MetricCard label="Best OOS model" value={formatPercent(bestModel?.directional_accuracy)} detail={`${bestModel?.model ?? "No active model"} · PF ${bestModel?.profit_factor ? Number(bestModel.profit_factor).toFixed(2) : "—"}`} tone={(bestModel?.expectancy ?? 0) > 0 ? "positive" : "negative"} />
-          <MetricCard label="System target" value={formatPercent(data.meta.target_directional_accuracy)} detail={`current best ${formatPercent(data.meta.achieved_directional_accuracy)}`} tone={data.meta.target_reached ? "positive" : "negative"} />
-          <MetricCard label="Next session" value={(nextFull?.forecast ?? "no-call").toUpperCase()} detail={nextFull ? `${formatDate(nextFull.date)} · expected ${formatPercent(nextFull.expected_score)}` : "awaiting research refresh"} />
-        </div>
         {(health.data?.status === "unhealthy" || data.health?.market.stale) && <div className="mb-4 flex gap-2 border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-100"><AlertTriangle className="size-4 shrink-0 text-red-400" /><span>Research freshness check failed. Forecasts remain visible for audit, but no stale artifact should be treated as a new decision.</span></div>}
 
         <TabsContent value="decision" className="space-y-4">

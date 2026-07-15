@@ -127,7 +127,10 @@ body {
   }
   body {
     @apply bg-background text-foreground selection:bg-primary/30 selection:text-foreground;
-    background-image: radial-gradient(circle at 85% -10%, rgb(247 147 26 / 8%), transparent 27rem);
+    background-image:
+      radial-gradient(circle at 82% -8%, rgb(247 147 26 / 10%), transparent 30rem),
+      linear-gradient(180deg, #080808 0%, #0a0a0a 42%, #080808 100%);
+    background-attachment: fixed;
   }
   html {
     @apply font-sans;
@@ -148,8 +151,51 @@ body {
     background-size: 28px 28px;
   }
 
+  .odyssey-hero {
+    box-shadow: 0 24px 90px rgb(0 0 0 / 42%), inset 0 1px rgb(255 255 255 / 3%);
+    isolation: isolate;
+  }
+
+  .odyssey-hero::after {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    content: "";
+    background:
+      linear-gradient(90deg, rgb(0 0 0 / 10%), transparent 38%, transparent 72%, rgb(0 0 0 / 26%)),
+      linear-gradient(180deg, transparent 65%, rgb(0 0 0 / 34%));
+  }
+
   .scrollbar-thin {
     scrollbar-color: #3a3a3a transparent;
     scrollbar-width: thin;
+  }
+}
+
+@media (hover: hover) {
+  [data-slot="card"] {
+    transition: transform 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+  }
+
+  [data-slot="card"]:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 16px 46px rgb(0 0 0 / 22%);
+  }
+}
+
+@media (max-width: 640px) {
+  .odyssey-hero .panel-grid {
+    background-size: 22px 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
