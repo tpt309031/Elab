@@ -1,6 +1,12 @@
 name: Daily hybrid research
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "research/**"
+      - "tests/**"
+      - ".github/workflows/daily-research.yml"
   schedule:
     - cron: "20 3 * * *"
   workflow_dispatch:
@@ -66,6 +72,19 @@ jobs:
           fi
           git commit -m "Refresh daily hybrid research"
           git push
+
+      - name: Resolve recovered pipeline alert
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TITLE="[ELAB] Daily research pipeline failure"
+          ISSUE_NUMBER=$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty')
+          if [[ -n "$ISSUE_NUMBER" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "Daily research recovered at ${GITHUB_SHA}. The latest closed-candle artifact passed all publication gates."
+            gh issue close "$ISSUE_NUMBER" --reason completed
+          fi
 
       - name: Publish failure summary
         if: failure()
