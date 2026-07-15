@@ -1586,6 +1586,7 @@ def fit_latest_forecasts(
     max_future_days: int | None = None,
     policy_history: pd.DataFrame | None = None,
     capacity_histories: Sequence[pd.DataFrame] | None = None,
+    reserved_histories: Sequence[pd.DataFrame] | None = None,
     preferred_models: Sequence[str] | None = None,
     pattern_adjuster: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -1756,10 +1757,15 @@ def fit_latest_forecasts(
         policy_probabilities, policy_returns, matrix, policy_dates,
     )
     matching_pattern_sets = _matching_pattern_sets(future, final_registry)
-    locked_histories = list(capacity_histories or ([policy_history] if policy_history is not None else []))
+    locked_histories = list(
+        capacity_histories
+        if capacity_histories is not None
+        else ([policy_history] if policy_history is not None else [])
+    )
+    reservation_sources = list(reserved_histories) if reserved_histories is not None else locked_histories
     existing_sideways = maximum_monthly_forecast_counts(locked_histories, "sideway")
     existing_no_calls = maximum_monthly_forecast_counts(locked_histories, "no-call")
-    reserved_dates = reserved_forecast_dates(locked_histories)
+    reserved_dates = reserved_forecast_dates(reservation_sources)
     monthly_abstentions: defaultdict[str, int] = defaultdict(int, existing_no_calls)
     forecast_rows: list[dict[str, object]] = []
     finite_volatility = development["volatility_7"].dropna()

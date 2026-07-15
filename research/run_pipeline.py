@@ -300,21 +300,6 @@ def main() -> None:
     ].tolist()
     calendar_capacity = _capacity_history(calendar.forecasts, learning_state, "Calendar")
     full_capacity = _capacity_history(full.forecasts, learning_state, "Full Hybrid")
-    calendar_future, calendar_selection, calendar_registry = fit_latest_forecasts(
-        frame,
-        groups["calendar"],
-        analog_columns,
-        "Calendar",
-        groups["sequence_calendar"],
-        len(groups["sequence_calendar_base"]),
-        args.deep,
-        policy_history=calendar.forecasts,
-        capacity_histories=[calendar_capacity, full_capacity],
-        preferred_models=calendar_preferred,
-        pattern_adjuster=lambda registry: apply_live_pattern_ranking(
-            registry, learning_state, "Calendar", as_of_closed=latest_closed,
-        ),
-    )
     full_future, full_selection, full_registry = fit_latest_forecasts(
         frame,
         groups["full"],
@@ -329,6 +314,30 @@ def main() -> None:
         preferred_models=full_preferred,
         pattern_adjuster=lambda registry: apply_live_pattern_ranking(
             registry, learning_state, "Full Hybrid", as_of_closed=latest_closed,
+        ),
+    )
+    fusion_capacity = full_capacity
+    if not full_future.empty:
+        fusion_capacity = (
+            pd.concat([full_capacity, full_future[["date", "forecast"]]], ignore_index=True)
+            .drop_duplicates("date", keep="last")
+            .sort_values("date")
+            .reset_index(drop=True)
+        )
+    calendar_future, calendar_selection, calendar_registry = fit_latest_forecasts(
+        frame,
+        groups["calendar"],
+        analog_columns,
+        "Calendar",
+        groups["sequence_calendar"],
+        len(groups["sequence_calendar_base"]),
+        args.deep,
+        policy_history=calendar.forecasts,
+        capacity_histories=[calendar_capacity, fusion_capacity],
+        reserved_histories=[calendar_capacity, full_capacity],
+        preferred_models=calendar_preferred,
+        pattern_adjuster=lambda registry: apply_live_pattern_ranking(
+            registry, learning_state, "Calendar", as_of_closed=latest_closed,
         ),
     )
     calendar_selection = _enrich_selection(calendar_selection, calendar.model_metrics)

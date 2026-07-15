@@ -219,6 +219,12 @@ Release evidence on July 13, 2026:
 - The already-issued July 13 Full Hybrid `SIDEWAY` call is immutable and leaves July one call above the new sideway cap; the policy adds no further July sideway calls rather than rewriting that record.
 - GitHub commit `2c6533e` deployed `READY` to `elab-drab.vercel.app`; production health was current, the mobile calendar had no horizontal overflow, and Vercel reported no runtime errors.
 
+Operational follow-up on July 15, 2026:
+
+- The scheduled refresh fetched the July 14 candle but correctly failed closed when the verifier found Calendar and Full Hybrid had independently consumed the shared Fusion sideway capacity.
+- Full Hybrid next-session forecasting now runs first and reserves its monthly capacity before Calendar builds the remaining Fusion ex-ante horizon. Immutable dates are tracked separately from capacity-only reservations.
+- The rebuilt artifact passed `35` tests and the publication verifier with ten official forecasts, eight evaluated forecasts, and two pending forecasts through July 14 UTC.
+
 ## Resume Procedure
 
 1. Read this manifest and `docs/accuracy-roadmap.md`.

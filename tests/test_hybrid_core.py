@@ -12,6 +12,7 @@ from research.hybrid_core import (
     grade_forecast,
     maximum_monthly_forecast_counts,
     monthly_purged_folds,
+    reserved_forecast_dates,
 )
 
 
@@ -96,6 +97,31 @@ def test_monthly_capacity_uses_most_constrained_authoritative_lane() -> None:
         "forecast": ["no-call", "no-call", "no-call", "sideway", "up"],
     })
     assert maximum_monthly_forecast_counts([calendar, fusion], "no-call") == {"2026-07": 3}
+
+
+def test_full_next_session_consumes_shared_fusion_sideway_capacity() -> None:
+    calendar_locked = pd.DataFrame({
+        "date": pd.date_range("2026-07-01", periods=7, freq="D"),
+        "forecast": ["sideway"] * 7,
+    })
+    full_locked = calendar_locked.copy()
+    full_next = pd.DataFrame({"date": [pd.Timestamp("2026-07-15")], "forecast": ["sideway"]})
+    fusion_capacity = pd.concat([full_locked, full_next], ignore_index=True)
+    used = maximum_monthly_forecast_counts([calendar_locked, fusion_capacity], "sideway")
+    reserved = reserved_forecast_dates([calendar_locked, full_locked])
+    future_dates = pd.date_range("2026-07-15", periods=5, freq="D")
+    probabilities = np.tile(np.array([0.20, 0.60, 0.20]), (len(future_dates), 1))
+    directions, _, _, overrides = allocate_monthly_directions(
+        future_dates,
+        probabilities,
+        np.eye(3),
+        policy_mode="probability",
+        existing_sideway_per_month=used,
+        excluded_dates=reserved,
+    )
+    assert used == {"2026-07": 8}
+    assert all(direction != "sideway" for direction in directions)
+    assert overrides.all()
 
 
 def test_monthly_folds_are_purged_and_chronological() -> None:
