@@ -255,8 +255,8 @@ export function HeroOdyssey({
       <div className="absolute inset-0 opacity-50 panel-grid" />
       <LightningCanvas reducedMotion={reduceMotion} />
 
-      <div className="relative z-10 flex min-h-[390px] flex-col">
-        <div className="flex min-h-16 items-center justify-between gap-3 border-b border-white/10 bg-black/35 px-4 backdrop-blur-xl sm:px-5">
+      <div className="relative z-10 flex min-h-[250px] flex-col">
+        <div className="flex min-h-14 items-center justify-between gap-3 border-b border-white/10 bg-black/35 px-4 backdrop-blur-xl sm:px-5">
           <div className="flex min-w-0 items-center gap-3">
             <div className="grid size-9 shrink-0 rotate-45 place-items-center border border-primary/60 bg-primary/10 shadow-[0_0_24px_rgba(247,147,26,.12)]">
               <Activity className="size-4 -rotate-45 text-primary" />
@@ -278,7 +278,7 @@ export function HeroOdyssey({
           </div>
         </div>
 
-        <div className="relative grid flex-1 items-center gap-8 px-5 py-8 sm:px-8 lg:grid-cols-[minmax(0,1fr)_300px] lg:px-10">
+        <div className="relative grid flex-1 items-center gap-5 px-5 py-5 sm:px-7 lg:grid-cols-[minmax(0,1fr)_280px] lg:px-8">
           {nodes.slice(0, 4).map((node, index) => (
             <SignalNode key={`${node.label}-${node.value}`} node={node} position={nodePositions[index]} index={index} />
           ))}
@@ -289,14 +289,14 @@ export function HeroOdyssey({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, ease: "easeOut" }}
           >
-            <div className="mb-5 inline-flex items-center gap-2 border border-primary/25 bg-primary/8 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.15em] text-primary">
+            <div className="mb-3 inline-flex items-center gap-2 border border-primary/25 bg-primary/8 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.15em] text-primary">
               <Sparkles className="size-3" />
               {sectionLabel} workspace
             </div>
-            <h1 id="dashboard-title" className="max-w-xl text-4xl font-semibold leading-[0.95] tracking-[-0.055em] text-white sm:text-6xl lg:text-7xl">
+            <h1 id="dashboard-title" className="max-w-xl text-4xl font-semibold leading-[0.95] tracking-[-0.055em] text-white sm:text-5xl lg:text-6xl">
               {title}
             </h1>
-            <p className="mt-5 max-w-xl text-sm leading-6 text-white/52 sm:text-base">{description}</p>
+            <p className="mt-3 hidden max-w-xl text-sm leading-6 text-white/52 sm:block">{description}</p>
           </motion.div>
 
           <motion.div
@@ -309,8 +309,8 @@ export function HeroOdyssey({
               <span className="eyebrow">Next calibrated call</span>
               <ArrowUpRight className="size-3.5 text-primary" />
             </div>
-            <strong className={cn("mt-5 block font-mono text-4xl font-semibold uppercase tracking-[-0.04em]", forecastTone)}>{forecast}</strong>
-            <div className="mt-5 h-px bg-white/10">
+            <strong className={cn("mt-3 block font-mono text-3xl font-semibold uppercase tracking-[-0.04em]", forecastTone)}>{forecast}</strong>
+            <div className="mt-3 h-px bg-white/10">
               <div className="h-px bg-primary shadow-[0_0_12px_rgba(247,147,26,.75)]" style={{ width: `${Math.max(0, Math.min(100, (forecastConfidence ?? 0) * 100))}%` }} />
             </div>
             <div className="mt-3 flex justify-between gap-3 font-mono text-[10px] text-white/45">
@@ -324,7 +324,7 @@ export function HeroOdyssey({
           {metrics.map((metric, index) => (
             <motion.div
               key={metric.label}
-              className="min-w-0 border-b border-r border-white/8 px-4 py-4 even:border-r-0 last:col-span-2 last:border-r-0 lg:col-span-1 lg:border-b-0 lg:border-r lg:even:border-r lg:last:col-span-1 lg:last:border-r-0"
+              className="min-w-0 border-b border-r border-white/8 px-3 py-3 even:border-r-0 last:col-span-2 last:border-r-0 lg:col-span-1 lg:border-b-0 lg:border-r lg:even:border-r lg:last:col-span-1 lg:last:border-r-0"
               initial={reduceMotion ? false : { opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.22 + index * 0.06, duration: 0.35 }}

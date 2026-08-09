@@ -2,18 +2,13 @@
 
 import { useMemo, useState } from "react";
 import { Activity, AlertTriangle, BarChart3, BrainCircuit, CalendarDays, ChartCandlestick, DatabaseZap, Menu, Radar, RefreshCw, ScanSearch, ShieldCheck, SlidersHorizontal, Target } from "lucide-react";
+import dynamic from "next/dynamic";
 
-import { BacktestPanel } from "@/components/dashboard/backtest-panel";
 import { CorrelationHeatmap } from "@/components/dashboard/correlation-heatmap";
 import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton";
-import { DiagnosticsPanel } from "@/components/dashboard/diagnostics-panel";
-import { EventLab } from "@/components/dashboard/event-lab";
-import { ForecastPanel } from "@/components/dashboard/forecast-panel";
+import { DecisionStrip } from "@/components/dashboard/decision-strip";
 import { MarketChart } from "@/components/dashboard/market-chart";
-import { ModelPanel } from "@/components/dashboard/model-panel";
-import { PatternPanel } from "@/components/dashboard/pattern-panel";
 import { ProbabilityGauge } from "@/components/dashboard/probability-gauge";
-import { SystemPanel } from "@/components/dashboard/system-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,6 +20,15 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { formatDate, formatPercent, formatSignedPercent, formatUsd } from "@/lib/format";
 import type { ForecastRow, MarketRow } from "@/lib/types";
 import { useResearchData } from "@/lib/use-research-data";
+
+const panelLoader = () => <div className="min-h-64 animate-pulse border border-border bg-card p-5 text-xs uppercase tracking-[0.18em] text-muted-foreground">Loading research module…</div>;
+const BacktestPanel = dynamic(() => import("@/components/dashboard/backtest-panel").then((module) => module.BacktestPanel), { loading: panelLoader });
+const DiagnosticsPanel = dynamic(() => import("@/components/dashboard/diagnostics-panel").then((module) => module.DiagnosticsPanel), { loading: panelLoader });
+const EventLab = dynamic(() => import("@/components/dashboard/event-lab").then((module) => module.EventLab), { loading: panelLoader });
+const ForecastPanel = dynamic(() => import("@/components/dashboard/forecast-panel").then((module) => module.ForecastPanel), { loading: panelLoader });
+const ModelPanel = dynamic(() => import("@/components/dashboard/model-panel").then((module) => module.ModelPanel), { loading: panelLoader });
+const PatternPanel = dynamic(() => import("@/components/dashboard/pattern-panel").then((module) => module.PatternPanel), { loading: panelLoader });
+const SystemPanel = dynamic(() => import("@/components/dashboard/system-panel").then((module) => module.SystemPanel), { loading: panelLoader });
 
 const navigation = [
   { value: "decision", label: "Decision", icon: ChartCandlestick },
@@ -57,11 +61,12 @@ function aggregateLiveDay(rows: MarketRow[], latestClosed: string): MarketRow[] 
 }
 
 export function DashboardShell() {
-  const { research, live, deep, health } = useResearchData();
   const [section, setSection] = useState("decision");
   const [windowMonths, setWindowMonths] = useState("3");
   const [showForecasts, setShowForecasts] = useState(true);
   const [showIndices, setShowIndices] = useState(true);
+  const loadResearchDetails = section !== "decision";
+  const { research, live, deep, health } = useResearchData(loadResearchDetails);
   const data = research.data;
   const latestClosed = data?.meta.latest_closed_utc ?? new Date().toISOString().slice(0, 10);
   const [defaultYear, defaultMonth] = latestClosed.slice(0, 7).split("-");
@@ -76,13 +81,25 @@ export function DashboardShell() {
   const latestMarket = live.data?.rows.at(-1) ?? marketWithLive.at(-1);
   const priorDaily = data?.market.at(-1);
   const liveMove = latestMarket && priorDaily ? latestMarket.close / priorDaily.close - 1 : null;
+  const firstPublishableTarget = data?.meta.first_publishable_target_utc?.slice(0, 10) ?? latestClosed;
   const officialNextFull = (data?.learning?.official_forecast_ledger ?? [])
-    .filter((row) => row.lane === "Full Hybrid" && row.date > latestClosed)
+    .filter((row) => (
+      row.lane === "Full Hybrid"
+      && (row.contract_version ?? 0) >= 2
+      && row.date >= firstPublishableTarget
+    ))
     .sort((left, right) => left.date.localeCompare(right.date))[0];
-  const nextFull = officialNextFull
-    ?? data?.forecast.full_hybrid_next_session.find((row) => row.forecast !== "no-call")
+  const generatedNextFull = data?.forecast.full_hybrid_next_session.find((row) => row.forecast !== "no-call")
     ?? data?.forecast.full_hybrid_next_session[0];
-  const bestModel = data?.performance.model_rankings.find((row) => row.lane === "Full Hybrid" && row.status === "active");
+  const generatedOfficialMatch = officialNextFull
+    ? data?.forecast.full_hybrid_next_session.find((row) => row.date === officialNextFull.date)
+    : undefined;
+  const nextFull = officialNextFull
+    ? { ...generatedOfficialMatch, ...officialNextFull }
+    : generatedNextFull;
+  const fullModelRankings = data?.performance.model_rankings.filter((row) => row.lane === "Full Hybrid") ?? [];
+  const activeModel = fullModelRankings.find((row) => row.status === "active");
+  const topOosModel = activeModel ?? fullModelRankings[0];
   const years = useMemo(() => data ? [...new Set(data.indices.map((row) => row.date.slice(0, 4)))].sort() : [], [data]);
   const chartWindow = useMemo(() => {
     if (!data) return { market: [], indices: [], forecasts: [] as ForecastRow[] };
@@ -120,9 +137,9 @@ export function DashboardShell() {
   const heroMetrics = [
     { label: "BTC live", value: formatUsd(latestMarket?.close), detail: `${live.data?.provider ?? data.meta.market_provider} · ${live.data ? "5-minute refresh" : "closed daily"}`, tone: (liveMove ?? 0) >= 0 ? "positive" as const : "negative" as const },
     { label: "Current move", value: formatSignedPercent(liveMove), detail: "versus latest closed UTC candle", tone: (liveMove ?? 0) >= 0 ? "positive" as const : "negative" as const },
-    { label: "Best OOS model", value: formatPercent(bestModel?.directional_accuracy), detail: `${bestModel?.model ?? "No active model"} · PF ${bestModel?.profit_factor ? Number(bestModel.profit_factor).toFixed(2) : "—"}`, tone: (bestModel?.expectancy ?? 0) > 0 ? "positive" as const : "negative" as const },
+    { label: "Top OOS model", value: formatPercent(topOosModel?.directional_accuracy), detail: `${topOosModel?.model ?? "Awaiting model"} · ${activeModel ? "trade eligible" : "standby"}`, tone: activeModel ? "positive" as const : "warning" as const },
     { label: "System target", value: formatPercent(data.meta.target_directional_accuracy), detail: `current best ${formatPercent(data.meta.achieved_directional_accuracy)}`, tone: data.meta.target_reached ? "positive" as const : "warning" as const },
-    { label: "Next session", value: (nextFull?.forecast ?? "no-call").toUpperCase(), detail: nextFull ? `${formatDate(nextFull.date)} · expected ${formatPercent(nextFull.expected_score)}` : "awaiting research refresh" },
+    { label: "Next session", value: (nextFull?.forecast ?? "no-call").toUpperCase(), detail: nextFull ? `${formatDate(nextFull.date)} · ${nextFull.trade_eligible ? `TRADE ${nextFull.trade_action?.toUpperCase()}` : "FLAT"}` : "awaiting research refresh" },
   ];
   return (
     <main className="mx-auto min-h-screen w-full max-w-[1720px] px-2 py-2 sm:px-5 sm:py-4 lg:px-7">
@@ -139,7 +156,7 @@ export function DashboardShell() {
         forecastConfidence={nextFull?.expected_score}
         metrics={heroMetrics}
         nodes={[
-          { label: "Model", value: bestModel?.model ?? "Awaiting selection" },
+          { label: "Model", value: topOosModel?.model ?? "Awaiting selection" },
           { label: "Validation", value: "Purged walk-forward" },
           { label: "Market feed", value: live.data?.provider ?? data.meta.market_provider },
           { label: "Artifact", value: data.meta.generated_at.slice(0, 16).replace("T", " ") + " UTC" },
@@ -150,6 +167,12 @@ export function DashboardShell() {
             <SheetContent side="right"><SheetHeader><SheetTitle>Research sections</SheetTitle></SheetHeader><nav className="mt-6 grid gap-2">{navigation.map((item) => <SheetClose asChild key={item.value}><Button variant={section === item.value ? "default" : "ghost"} className="justify-start" onClick={() => setSection(item.value)}><item.icon />{item.label}</Button></SheetClose>)}</nav></SheetContent>
           </Sheet>
         )}
+      />
+
+      <DecisionStrip
+        forecast={nextFull}
+        meta={data.meta}
+        marketStale={Boolean(health.data?.artifact.stale || data.health?.market.stale)}
       />
 
       <Tabs value={section} onValueChange={setSection}>
@@ -169,7 +192,7 @@ export function DashboardShell() {
             <MarketChart market={chartWindow.market} indices={chartWindow.indices} forecasts={chartWindow.forecasts} />
             <aside className="space-y-4">
               <Card className="panel-grid"><CardHeader><CardTitle className="flex items-center justify-between text-sm"><span className="flex items-center gap-2"><Target className="size-4 text-primary" />Probability stack</span><Badge variant="outline">{nextFull?.lane ?? "Full Hybrid"}</Badge></CardTitle></CardHeader><CardContent><ProbabilityGauge forecast={nextFull} /><div className="space-y-3">{probabilities.map((item) => <div key={item.label}><div className="mb-1 flex justify-between font-mono text-[10px]"><span>{item.label}</span><span>{formatPercent(item.value)}</span></div><Progress value={item.value * 100} className={item.className} /></div>)}</div></CardContent></Card>
-              <Card><CardHeader><CardTitle className="text-sm">Decision context</CardTitle></CardHeader><CardContent className="space-y-3 text-xs text-muted-foreground"><p><b className="text-foreground">Session:</b> {nextFull ? formatDate(nextFull.date) : "—"}</p><p><b className="text-foreground">Policy:</b> {nextFull?.policy_mode ?? "calibrated utility"} · sideway weight {nextFull?.sideway_penalty?.toFixed(2) ?? "—"}</p><p><b className="text-foreground">Monthly limits:</b> max {data.meta.validation.maximum_sideway_calls_per_month ?? 8} SIDEWAY · max {data.meta.validation.maximum_no_calls_per_month ?? 6} NO CALL</p><p><b className="text-foreground">Members:</b> {nextFull?.model_members?.join(", ") ?? "awaiting selection"}</p><p><b className="text-foreground">Pattern:</b> {nextFull?.top_pattern?.name ?? "No active pattern match"}</p><p><b className="text-foreground">Data:</b> {data.meta.availability_assumption}</p></CardContent></Card>
+              <Card><CardHeader><CardTitle className="text-sm">Decision context</CardTitle></CardHeader><CardContent className="space-y-3 text-xs text-muted-foreground"><p><b className="text-foreground">Session:</b> {nextFull ? formatDate(nextFull.date) : "—"}</p><p><b className="text-foreground">Policy:</b> {nextFull?.policy_mode ?? "calibrated utility"} · SIDEWAY weight {nextFull?.sideway_penalty?.toFixed(2) ?? "—"}</p><p><b className="text-foreground">Execution:</b> {nextFull?.trade_eligible ? `TRADE ${nextFull.trade_action?.toUpperCase()}` : "FLAT"} · lower-bound edge {formatSignedPercent(nextFull?.expectancy_lcb)}</p><p><b className="text-foreground">Members:</b> {nextFull?.model_members?.join(", ") ?? "awaiting selection"}</p><p><b className="text-foreground">Pattern:</b> {nextFull?.top_pattern?.name ?? "No active pattern match"}</p><p><b className="text-foreground">Timing:</b> information through {nextFull?.information_cutoff_utc?.slice(0, 10) ?? data.meta.latest_closed_utc}; target opens {nextFull?.target_start_utc?.slice(0, 10) ?? "—"} UTC.</p></CardContent></Card>
               <div className="flex gap-2 border border-border bg-card p-3 text-xs text-muted-foreground"><DatabaseZap className="size-4 shrink-0 text-primary" /><span>Research artifact {data.meta.generated_at.slice(0, 16).replace("T", " ")} UTC. Live price refreshes independently every five minutes.</span></div>
             </aside>
           </div>

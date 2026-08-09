@@ -10,14 +10,20 @@ from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 
-from research.hybrid_core import SIDEWAY_LIMIT, TRADING_COST, grade_forecast
+from research.hybrid_core import (
+    ROUND_TRIP_COST,
+    SIDEWAY_LIMIT,
+    _balanced_pattern_tokens,
+    grade_forecast,
+)
 from research.evaluation import conservative_beta_lower_bound
 
 
-STATE_SCHEMA_VERSION = 3
+STATE_SCHEMA_VERSION = 4
 MODEL_PRIOR_STRENGTH = 30.0
 PATTERN_PRIOR_STRENGTH = 12.0
 MAX_SELECTION_HISTORY = 730
+MAX_SOURCE_REVISIONS = 730
 EVENT_WINDOW_DAYS = 3
 PIVOT_CONFIRMATION_DAYS = 5
 MIN_LIVE_PROMOTION_SAMPLES = 20
@@ -30,6 +36,7 @@ def empty_learning_state() -> dict[str, Any]:
         "forecasts": [],
         "event_evaluations": [],
         "selection_history": [],
+        "source_revisions": [],
     }
 
 
@@ -50,6 +57,7 @@ def load_learning_state(path: str | Path) -> dict[str, Any]:
         not isinstance(payload.get("forecasts", []), list)
         or not isinstance(payload.get("event_evaluations", []), list)
         or not isinstance(payload.get("selection_history", []), list)
+        or not isinstance(payload.get("source_revisions", []), list)
     ):
         raise RuntimeError("Production learning ledger has invalid collection fields")
     state = empty_learning_state()
@@ -57,6 +65,7 @@ def load_learning_state(path: str | Path) -> dict[str, Any]:
     state["forecasts"] = list(payload.get("forecasts", []))
     state["event_evaluations"] = list(payload.get("event_evaluations", []))
     state["selection_history"] = list(payload.get("selection_history", []))[-MAX_SELECTION_HISTORY:]
+    state["source_revisions"] = list(payload.get("source_revisions", []))[-MAX_SOURCE_REVISIONS:]
     for row in state["forecasts"]:
         if not isinstance(row, dict):
             raise RuntimeError("Production learning ledger contains a non-object forecast")
@@ -74,6 +83,50 @@ def serialize_learning_state(state: dict[str, Any]) -> str:
     return json.dumps(state, ensure_ascii=True, separators=(",", ":"))
 
 
+def record_source_revision(
+    state: dict[str, Any],
+    lineage: Sequence[dict[str, Any]],
+    recorded_at: str,
+) -> bool:
+    sources = sorted(
+        [
+            {
+                "source": str(item.get("source")),
+                "sha256": str(item.get("sha256")),
+                "rows": int(item.get("rows", 0)),
+                "last_date": item.get("last_date"),
+                "availability_mode": item.get("availability_mode"),
+            }
+            for item in lineage
+            if item.get("source") and item.get("sha256")
+        ],
+        key=lambda item: item["source"],
+    )
+    digest = hashlib.sha256(
+        json.dumps(sources, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+    ).hexdigest()
+    revisions = state.setdefault("source_revisions", [])
+    if revisions and revisions[-1].get("digest") == digest:
+        return False
+    previous = {
+        str(item.get("source")): str(item.get("sha256"))
+        for item in (revisions[-1].get("sources", []) if revisions else [])
+    }
+    changed_sources = [
+        item["source"] for item in sources
+        if previous.get(item["source"]) != item["sha256"]
+    ]
+    revisions.append({
+        "recorded_at": recorded_at,
+        "digest": digest,
+        "changed_sources": changed_sources,
+        "sources": sources,
+    })
+    state["source_revisions"] = revisions[-MAX_SOURCE_REVISIONS:]
+    state["updated_at"] = recorded_at
+    return True
+
+
 def _published_model_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
     fields = (
         "model", "forecast", "prob_down", "prob_sideway", "prob_up", "source",
@@ -82,8 +135,13 @@ def _published_model_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
     return {field: prediction.get(field) for field in fields}
 
 
-def _published_pattern_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
-    fields = "pattern_id", "pattern", "direction", "rank_at_issue"
+def _published_pattern_prediction(
+    prediction: dict[str, Any],
+    contract_version: int = 1,
+) -> dict[str, Any]:
+    fields = ["pattern_id", "pattern", "direction", "rank_at_issue"]
+    if contract_version >= 2:
+        fields.extend(["signal_lag_days", "duration_days"])
     return {field: prediction.get(field) for field in fields}
 
 
@@ -96,6 +154,7 @@ def _pattern_predictions(forecast: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def official_forecast_digest(forecast: dict[str, Any]) -> str:
+    contract_version = int(forecast.get("contract_version", 1))
     fields = (
         "forecast_id", "date", "target_date", "lane", "issued_at", "closed_through_at_issue",
         "forecast", "confidence", "prob_down", "prob_sideway", "prob_up", "expected_score",
@@ -103,13 +162,20 @@ def official_forecast_digest(forecast: dict[str, Any]) -> str:
         "model_weights", "top_pattern",
     )
     published = {field: forecast.get(field) for field in fields}
+    if contract_version >= 2:
+        contract_fields = (
+            "contract_version", "information_cutoff_utc", "target_start_utc", "target_end_utc",
+            "trade_action", "trade_eligible", "trade_gate_reason", "expected_net_return",
+            "expectancy_lcb",
+        )
+        published.update({field: forecast.get(field) for field in contract_fields})
     published["model_predictions"] = [
         _published_model_prediction(item)
         for item in forecast.get("model_predictions", [])
         if isinstance(item, dict)
     ]
     published["pattern_predictions"] = [
-        _published_pattern_prediction(item) for item in _pattern_predictions(forecast)
+        _published_pattern_prediction(item, contract_version) for item in _pattern_predictions(forecast)
     ]
     canonical = json.dumps(published, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -117,9 +183,9 @@ def official_forecast_digest(forecast: dict[str, Any]) -> str:
 
 def _strategy_return(direction: str, daily_return: float) -> float:
     if direction == "up":
-        return daily_return - TRADING_COST
+        return daily_return - ROUND_TRIP_COST
     if direction == "down":
-        return -daily_return - TRADING_COST
+        return -daily_return - ROUND_TRIP_COST
     return 0.0
 
 
@@ -142,6 +208,20 @@ def append_official_forecast(
     target_date = str(forecast.get("date", ""))[:10]
     if not target_date:
         return False
+    contract_version = int(forecast.get("contract_version", 2))
+    target_start = pd.Timestamp(f"{target_date}T00:00:00Z")
+    target_end = target_start + pd.Timedelta(days=1)
+    issued_timestamp = pd.Timestamp(issued_at)
+    if issued_timestamp.tzinfo is None:
+        issued_timestamp = issued_timestamp.tz_localize("UTC")
+    else:
+        issued_timestamp = issued_timestamp.tz_convert("UTC")
+    closed_date = pd.Timestamp(closed_through).normalize()
+    if contract_version >= 2:
+        if issued_timestamp >= target_start:
+            raise ValueError(f"Ex-ante forecast must be issued before target opens: {target_date}")
+        if pd.Timestamp(target_date).normalize() < closed_date + pd.Timedelta(days=2):
+            raise ValueError(f"Target does not respect the two-session publication lead: {target_date}")
     forecast_id = f"{lane}|{target_date}"
     existing = {
         str(row.get("forecast_id")): row
@@ -206,6 +286,8 @@ def append_official_forecast(
             "pattern": match.get("name"),
             "direction": match.get("direction"),
             "rank_at_issue": match.get("rank"),
+            "signal_lag_days": match.get("signal_lag_days", 0),
+            "duration_days": match.get("duration_days", 1),
             "status": "pending",
             "score": None,
             "strategy_return": None,
@@ -239,6 +321,18 @@ def append_official_forecast(
         "model_predictions": model_predictions,
         "pattern_predictions": pattern_predictions,
         "pattern_evaluation": pattern_evaluation,
+        "contract_version": contract_version,
+        "information_cutoff_utc": forecast.get(
+            "information_cutoff_utc",
+            (closed_date + pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z"),
+        ),
+        "target_start_utc": forecast.get("target_start_utc", target_start.strftime("%Y-%m-%dT%H:%M:%SZ")),
+        "target_end_utc": forecast.get("target_end_utc", target_end.strftime("%Y-%m-%dT%H:%M:%SZ")),
+        "trade_action": forecast.get("trade_action", "flat"),
+        "trade_eligible": bool(forecast.get("trade_eligible", False)),
+        "trade_gate_reason": forecast.get("trade_gate_reason", "expectancy gate not evaluated"),
+        "expected_net_return": forecast.get("expected_net_return"),
+        "expectancy_lcb": forecast.get("expectancy_lcb"),
     }
     entry["immutable_digest"] = official_forecast_digest(entry)
     state.setdefault("forecasts", []).append(entry)
@@ -280,6 +374,11 @@ def grade_learning_state(
             row["status"] = status
             row["score"] = score
             row["strategy_return"] = _strategy_return(str(row.get("forecast")), actual_return)
+        legacy_action = row.get("forecast") if int(row.get("contract_version", 1)) < 2 else "flat"
+        trade_action = str(row.get("trade_action", legacy_action))
+        row["executed_strategy_return"] = (
+            _strategy_return(trade_action, actual_return) if trade_action in {"up", "down"} else 0.0
+        )
         for prediction in row.get("model_predictions", []):
             direction = str(prediction.get("forecast", "no-call"))
             if direction == "no-call":
@@ -474,6 +573,7 @@ def apply_live_model_ranking(
     lane: str,
     active_limit: int = 4,
     as_of_closed: str | pd.Timestamp | None = None,
+    execution_suspended: bool = False,
 ) -> pd.DataFrame:
     if metrics.empty:
         return metrics
@@ -544,6 +644,14 @@ def apply_live_model_ranking(
     eligible = output["coverage"] >= 0.80
     if "weighted_lcb" in output:
         eligible &= output["weighted_lcb"].fillna(0) >= 0.20
+    if "expectancy_lcb" in output:
+        eligible &= output["expectancy_lcb"].fillna(-np.inf) > 0
+    else:
+        eligible &= False
+    if execution_suspended:
+        eligible &= False
+    output["trade_eligible"] = eligible.astype(bool)
+    output["drift_guard_active"] = bool(execution_suspended)
     previous = _latest_active_models(state, lane)
     previous_date = _latest_selection_date(state)
     current_date = pd.Timestamp(as_of_closed).normalize() if as_of_closed is not None else None
@@ -606,6 +714,12 @@ def apply_live_model_ranking(
             reasons.append("initial conservative OOS selection")
         elif row["status"] == "active":
             reasons.append("monthly promotion with sufficient live evidence")
+        elif not bool(row["trade_eligible"]):
+            reasons.append(
+                "standby: execution suspended by recent outcome drift"
+                if execution_suspended
+                else "standby: net expectancy lower bound is not positive after costs"
+            )
         elif int(row["live_samples"]) < MIN_LIVE_PROMOTION_SAMPLES:
             reasons.append(f"promotion requires {MIN_LIVE_PROMOTION_SAMPLES} live grades")
         elif not monthly_rebalance:
@@ -681,8 +795,9 @@ def apply_live_pattern_ranking(
         or previous_date.to_period("M") != current_date.to_period("M")
     )
     active_tokens = tokens[output["eligible"] & tokens.isin(previous)].head(active_limit).tolist()
-    if not previous:
-        active_tokens = tokens[output["eligible"]].head(active_limit).tolist()
+    balanced_candidates = _balanced_pattern_tokens(output, active_limit, "adaptive_rank_score")
+    if not previous or not active_tokens:
+        active_tokens = balanced_candidates
     elif monthly_rebalance:
         challengers = output[
             output["eligible"]
@@ -699,6 +814,13 @@ def apply_live_pattern_ranking(
             if float(challenger["live_weighted_lcb"]) > float(output.loc[weakest_index, "live_weighted_lcb"]):
                 active_tokens.remove(str(tokens.iloc[weakest_index]))
                 active_tokens.append(challenger_token)
+    # A failed incumbent is removed immediately after its daily grade; fill the
+    # vacancy from the directionally balanced standby ranking.
+    for candidate_token in balanced_candidates:
+        if len(active_tokens) >= active_limit:
+            break
+        if candidate_token not in active_tokens:
+            active_tokens.append(candidate_token)
     output["status"] = np.where(tokens.isin(active_tokens), "active", "standby")
     current = set(tokens[output["status"] == "active"])
     output["selection_change"] = [

@@ -22,11 +22,13 @@ function DirectionIcon({ direction }: { direction: PatternMetric["direction"] })
 
 export function PatternPanel({ data }: PatternPanelProps) {
   const [lane, setLane] = useState<"full_hybrid" | "calendar">("full_hybrid");
+  const [registryView, setRegistryView] = useState<"active" | "standby">("active");
   const patterns = data.patterns[lane];
+  const visiblePatterns = patterns.filter((pattern) => pattern.status === registryView).slice(0, 16);
   const patternKey = (pattern: PatternMetric) => `${pattern.pattern_id}:${pattern.direction}`;
   const [selectedId, setSelectedId] = useState(patterns[0] ? patternKey(patterns[0]) : undefined);
   const selected = patterns.find((pattern) => patternKey(pattern) === selectedId) ?? patterns[0];
-  const chartData = useMemo(() => patterns.slice(0, 16).map((pattern) => ({
+  const chartData = useMemo(() => patterns.filter((pattern) => pattern.status === "active").slice(0, 16).map((pattern) => ({
     name: `#${pattern.rank}`,
     accuracy: (pattern.adjusted_weighted_accuracy ?? pattern.weighted_accuracy) * 100,
     direction: pattern.direction,
@@ -36,12 +38,13 @@ export function PatternPanel({ data }: PatternPanelProps) {
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border border-border bg-card p-3">
           <div><p className="eyebrow">walk-forward registry</p><h2 className="mt-1 text-xl font-semibold">Pattern ranking</h2></div>
-          <Tabs value={lane} onValueChange={(value) => { const nextLane = value as typeof lane; setLane(nextLane); const first = data.patterns[nextLane][0]; setSelectedId(first ? patternKey(first) : undefined); }}>
+          <Tabs value={lane} onValueChange={(value) => { const nextLane = value as typeof lane; setLane(nextLane); const first = data.patterns[nextLane].find((pattern) => pattern.status === registryView); setSelectedId(first ? patternKey(first) : undefined); }}>
             <TabsList><TabsTrigger value="full_hybrid">Fusion</TabsTrigger><TabsTrigger value="calendar">Calendar</TabsTrigger></TabsList>
           </Tabs>
         </div>
+        <div className="flex items-center justify-between border border-border bg-card p-2.5"><span className="text-xs text-muted-foreground">16 production slots · shape duration 1–6d · learned lead 0–3d</span><Tabs value={registryView} onValueChange={(value) => { const next = value as typeof registryView; setRegistryView(next); const first = patterns.find((pattern) => pattern.status === next); setSelectedId(first ? patternKey(first) : undefined); }}><TabsList><TabsTrigger value="active">Active</TabsTrigger><TabsTrigger value="standby">Standby</TabsTrigger></TabsList></Tabs></div>
         <div className="grid gap-2 sm:grid-cols-2">
-          {patterns.slice(0, 24).map((pattern) => (
+          {visiblePatterns.map((pattern) => (
             <button
               type="button"
               key={`${pattern.pattern_id}-${pattern.direction}`}
@@ -49,7 +52,7 @@ export function PatternPanel({ data }: PatternPanelProps) {
               className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border p-3 text-left transition hover:border-primary/70 ${selected && patternKey(selected) === patternKey(pattern) ? "border-primary bg-primary/5" : "border-border bg-card"}`}
             >
               <span className="grid size-8 place-content-center border border-border bg-background font-mono text-xs">{pattern.rank}</span>
-              <span className="min-w-0"><b className="flex items-center gap-2 truncate text-sm font-medium">{pattern.pattern}{pattern.selection_change === "promoted" && <Badge className="h-4 px-1 text-[8px]">NEW</Badge>}</b><small className="mt-1 block font-mono text-[10px] text-muted-foreground">n={pattern.occurrences} · {formatPercent(pattern.adjusted_weighted_accuracy ?? pattern.weighted_accuracy)} adjusted · live n={pattern.live_occurrences ?? 0}</small></span>
+              <span className="min-w-0"><b className="flex items-center gap-2 truncate text-sm font-medium">{pattern.pattern}{pattern.selection_change === "promoted" && <Badge className="h-4 px-1 text-[8px]">NEW</Badge>}</b><small className="mt-1 block font-mono text-[10px] text-muted-foreground">n={pattern.occurrences} · {formatPercent(pattern.adjusted_weighted_accuracy ?? pattern.weighted_accuracy)} · {pattern.duration_days ?? 1}d / +{pattern.signal_lag_days ?? 0}d</small></span>
               <DirectionIcon direction={pattern.direction} />
             </button>
           ))}
@@ -83,6 +86,7 @@ export function PatternPanel({ data }: PatternPanelProps) {
                 <div className="border border-border p-3"><p className="eyebrow">exact hit</p><strong className="metric-value">{formatPercent(selected.exact_accuracy)}</strong></div>
                 <div className="border border-border p-3"><p className="eyebrow">expectancy</p><strong className={selected.expectancy >= 0 ? "metric-value text-emerald-400" : "metric-value text-red-400"}>{formatSignedPercent(selected.expectancy)}</strong></div>
               </div>
+              <div className="grid grid-cols-3 gap-2 text-center font-mono text-xs"><div className="border border-border p-2"><span className="block text-muted-foreground">Shape</span>{selected.duration_days ?? 1}d</div><div className="border border-border p-2"><span className="block text-muted-foreground">Lead</span>+{selected.signal_lag_days ?? 0}d</div><div className="border border-border p-2"><span className="block text-muted-foreground">Lift</span>{formatSignedPercent(selected.conservative_lift)}</div></div>
               <div className="border border-border p-3"><p className="eyebrow">rule expression</p><code className="mt-2 block break-words font-mono text-[11px] leading-5 text-muted-foreground">{selected.expression}</code></div>
               {selected.replacement_reason && <p className="border-l-2 border-primary px-3 text-xs text-muted-foreground">{selected.replacement_reason}</p>}
               <div><p className="mb-2 flex items-center gap-2 text-xs font-medium"><History className="size-4 text-primary" />Recent historical occurrences</p><div className="flex flex-wrap gap-2">{selected.examples.map((date) => <Badge variant="secondary" key={date}>{date}</Badge>)}</div></div>

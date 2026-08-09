@@ -5,7 +5,6 @@ import math
 import time
 import urllib.parse
 import urllib.request
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,11 +34,15 @@ OOS_START = pd.Timestamp("2024-01-01")
 UP_CORRECT = 0.03
 DOWN_CORRECT = -0.03
 SIDEWAY_LIMIT = 0.01
-MAX_SIDEWAY_PER_MONTH = 8
-MAX_NO_CALL_PER_MONTH = 6
+# Forecasts are produced every day from model probabilities. Capacity limits now
+# belong to the execution gate, not to the statistical forecast itself.
+MAX_SIDEWAY_PER_MONTH: int | None = None
+MAX_NO_CALL_PER_MONTH = 0
 UP_PARTIAL_MIN = 0.001
 DOWN_PARTIAL_MAX = -0.001
 TRADING_COST = 0.0005
+ROUND_TRIP_COST = TRADING_COST * 2
+FORECAST_LEAD_DAYS = 2
 
 
 @dataclass(frozen=True)
@@ -479,7 +482,10 @@ def build_feature_frame(
         "rsi14", "atr14_pct", "volume_z20", "body_pct", "upper_wick_ratio", "lower_wick_ratio", "range_pct",
     ]
     market_features = market[target_columns + technical_columns].copy()
-    market_features[technical_columns] = market_features[technical_columns].shift(1)
+    # The daily research run completes after UTC day D+1 has opened. A forecast
+    # published by that run therefore targets D+2 and may only use market data
+    # closed through D.
+    market_features[technical_columns] = market_features[technical_columns].shift(FORECAST_LEAD_DAYS)
 
     frame = astro.copy()
     frame = frame.merge(indices, on="date", how="outer")
@@ -499,8 +505,8 @@ def build_feature_frame(
         intraday_frame["date"] = pd.to_datetime(intraday_frame["date"]).dt.normalize()
         intraday_columns = [column for column in intraday_frame if column != "date"]
         frame = frame.merge(intraday_frame, on="date", how="outer").sort_values("date").reset_index(drop=True)
-        # Intraday aggregates from UTC day D become available to the forecast for D+1.
-        frame[intraday_columns] = frame[intraday_columns].shift(1)
+        # Intraday aggregates follow the same ex-ante publication contract.
+        frame[intraday_columns] = frame[intraday_columns].shift(FORECAST_LEAD_DAYS)
         for column in [item for item in intraday_columns if "volume_" in item and "signed" not in item]:
             frame[f"{column}_z20"] = _rolling_zscore(frame[column], 20)
             intraday_columns.append(f"{column}_z20")
@@ -595,6 +601,43 @@ def build_feature_frame(
     frame["btc_extreme_low"] = (frame["index_BTC"] <= 20).astype(float)
     frame["trader_extreme_high"] = (frame["index_me"] >= 80).astype(float)
     frame["trader_extreme_low"] = (frame["index_me"] <= 20).astype(float)
+    for window in (2, 3, 5, 6):
+        frame[f"same_phase_days_{window}"] = frame["same_phase"].rolling(window).sum()
+        frame[f"opposite_phase_days_{window}"] = frame["opposite_phase"].rolling(window).sum()
+        frame[f"btc_rise_days_{window}"] = btc_direction.gt(0).astype(float).rolling(window).sum()
+        frame[f"btc_fall_days_{window}"] = btc_direction.lt(0).astype(float).rolling(window).sum()
+        frame[f"trader_rise_days_{window}"] = trader_direction.gt(0).astype(float).rolling(window).sum()
+        frame[f"trader_fall_days_{window}"] = trader_direction.lt(0).astype(float).rolling(window).sum()
+    frame["gap_abs_slope_3"] = _rolling_slope(frame["gap_index_abs"], 3)
+    frame["cross_count_6"] = frame["index_cross"].rolling(6).sum()
+    frame["btc_turn_down_after_rise"] = (
+        (frame["index_btc_slope_3"].shift(1) >= 2)
+        & (frame["index_btc_change_1"] <= -8)
+    ).astype(float)
+    frame["trader_turn_down_after_rise"] = (
+        (frame["index_me_slope_3"].shift(1) >= 2)
+        & (frame["index_me_change_1"] <= -8)
+    ).astype(float)
+    frame["btc_turn_up_after_fall"] = (
+        (frame["index_btc_slope_3"].shift(1) <= -2)
+        & (frame["index_btc_change_1"] >= 8)
+    ).astype(float)
+    frame["trader_turn_up_after_fall"] = (
+        (frame["index_me_slope_3"].shift(1) <= -2)
+        & (frame["index_me_change_1"] >= 8)
+    ).astype(float)
+    recent_trader_top_turn = frame["trader_turn_down_after_rise"].rolling(3).max()
+    recent_btc_top_turn = frame["btc_turn_down_after_rise"].rolling(3).max()
+    recent_trader_bottom_turn = frame["trader_turn_up_after_fall"].rolling(3).max()
+    recent_btc_bottom_turn = frame["btc_turn_up_after_fall"].rolling(3).max()
+    frame["staggered_top_turn_3"] = (
+        ((frame["btc_turn_down_after_rise"] > 0) & (recent_trader_top_turn > 0))
+        | ((frame["trader_turn_down_after_rise"] > 0) & (recent_btc_top_turn > 0))
+    ).astype(float)
+    frame["staggered_bottom_turn_3"] = (
+        ((frame["btc_turn_up_after_fall"] > 0) & (recent_trader_bottom_turn > 0))
+        | ((frame["trader_turn_up_after_fall"] > 0) & (recent_btc_bottom_turn > 0))
+    ).astype(float)
 
     frame["astro_finance_z30"] = _rolling_zscore(frame["finance"], 30)
     frame["astro_volatility_z30"] = _rolling_zscore(frame["volatility"], 30)
@@ -630,7 +673,15 @@ def build_feature_frame(
         "index_cross", "same_phase", "opposite_phase", "index_btc_shock", "index_me_shock",
         "index_corr_2", "index_corr_5", "index_corr_7", "btc_price_divergence",
         "trader_price_divergence", "btc_extreme_high", "btc_extreme_low", "trader_extreme_high",
-        "trader_extreme_low",
+        "trader_extreme_low", "same_phase_days_2", "same_phase_days_3", "same_phase_days_5",
+        "same_phase_days_6", "opposite_phase_days_2", "opposite_phase_days_3",
+        "opposite_phase_days_5", "opposite_phase_days_6", "btc_rise_days_2", "btc_rise_days_3",
+        "btc_rise_days_5", "btc_rise_days_6", "btc_fall_days_2", "btc_fall_days_3",
+        "btc_fall_days_5", "btc_fall_days_6", "trader_rise_days_2", "trader_rise_days_3",
+        "trader_rise_days_5", "trader_rise_days_6", "trader_fall_days_2", "trader_fall_days_3",
+        "trader_fall_days_5", "trader_fall_days_6", "gap_abs_slope_3", "cross_count_6",
+        "btc_turn_down_after_rise", "trader_turn_down_after_rise", "btc_turn_up_after_fall",
+        "trader_turn_up_after_fall", "staggered_top_turn_3", "staggered_bottom_turn_3",
     ]
     astro_columns = [
         "finance", "career", "volatility", "composite", "astro_availability_imputed", "astro_finance_z30", "astro_volatility_z30",
@@ -715,6 +766,52 @@ PATTERN_DEFINITIONS: dict[str, tuple[str, str]] = {
     "astro_index_alignment": ("(astro_index_alignment > 0) & (index_btc_change_1 != 0)", "Astro composite and BTC psychology align"),
     "astro_index_tension": ("astro_index_tension > 0", "Astro composite and BTC psychology conflict"),
     "shock_confluence": ("shock_confluence > 0", "Index shock coincides with astro event"),
+    "co_rise_3_then_drop": (
+        "(btc_rise_days_3 >= 2) & (trader_rise_days_3 >= 2) & "
+        "((btc_turn_down_after_rise > 0) | (trader_turn_down_after_rise > 0))",
+        "Both indices rise, then one turns down sharply",
+    ),
+    "co_fall_3_then_rebound": (
+        "(btc_fall_days_3 >= 2) & (trader_fall_days_3 >= 2) & "
+        "((btc_turn_up_after_fall > 0) | (trader_turn_up_after_fall > 0))",
+        "Both indices fall, then one rebounds sharply",
+    ),
+    "staggered_top_turn_3": (
+        "staggered_top_turn_3 > 0",
+        "Index top-turn signals arrive within three days",
+    ),
+    "staggered_bottom_turn_3": (
+        "staggered_bottom_turn_3 > 0",
+        "Index bottom-turn signals arrive within three days",
+    ),
+    "opposite_phase_persistent_3": (
+        "opposite_phase_days_3 >= 3",
+        "Indices remain opposite-phase for three days",
+    ),
+    "opposite_phase_persistent_5": (
+        "opposite_phase_days_5 >= 4",
+        "Indices remain opposite-phase for most of five days",
+    ),
+    "same_phase_rise_3": (
+        "(same_phase_days_3 >= 2) & (btc_rise_days_3 >= 2) & (trader_rise_days_3 >= 2)",
+        "Indices rise in phase over three days",
+    ),
+    "same_phase_fall_3": (
+        "(same_phase_days_3 >= 2) & (btc_fall_days_3 >= 2) & (trader_fall_days_3 >= 2)",
+        "Indices fall in phase over three days",
+    ),
+    "wide_gap_widening_btc": (
+        "(gap_index >= 18) & (gap_abs_slope_3 >= 3)",
+        "BTC psychology lead widens over three days",
+    ),
+    "wide_gap_widening_trader": (
+        "(gap_index <= -18) & (gap_abs_slope_3 >= 3)",
+        "Trader energy lead widens over three days",
+    ),
+    "repeated_cross_6": (
+        "cross_count_6 >= 3",
+        "Indices cross repeatedly within six days",
+    ),
 }
 
 
@@ -750,11 +847,11 @@ def allocate_monthly_directions(
     matrix: np.ndarray,
     policy_mode: str = "reward",
     sideway_penalty: float = 1.0,
-    max_sideway_per_month: int = MAX_SIDEWAY_PER_MONTH,
+    max_sideway_per_month: int | None = MAX_SIDEWAY_PER_MONTH,
     existing_sideway_per_month: Mapping[str, int] | None = None,
     excluded_dates: Iterable[object] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Apply the decision policy while retaining only the strongest monthly sideway calls."""
+    """Apply the score policy, with an optional legacy SIDEWAY capacity."""
     probabilities = np.asarray(probabilities, dtype=float)
     if probabilities.ndim != 2 or probabilities.shape[1] != len(CLASS_NAMES):
         raise ValueError("probabilities must have shape (n_rows, 3)")
@@ -774,25 +871,26 @@ def allocate_monthly_directions(
         for value in (excluded_dates or [])
     }
 
-    for month_key in pd.unique(month_keys):
-        available = max(0, max_sideway_per_month - existing.get(str(month_key), 0))
-        candidates = np.flatnonzero(
-            (month_keys == month_key)
-            & (selected == sideway_index)
-            & ~np.isin(date_keys, list(excluded))
-        )
-        if len(candidates) <= available:
-            continue
-        directional_best = np.maximum(utilities[candidates, 0], utilities[candidates, 2])
-        sideway_advantage = utilities[candidates, sideway_index] - directional_best
-        order = np.argsort(-sideway_advantage, kind="stable")
-        rejected = candidates[order[available:]]
-        selected[rejected] = np.where(
-            utilities[rejected, CLASS_TO_INDEX["up"]] > utilities[rejected, CLASS_TO_INDEX["down"]],
-            CLASS_TO_INDEX["up"],
-            CLASS_TO_INDEX["down"],
-        )
-        overridden[rejected] = True
+    if max_sideway_per_month is not None:
+        for month_key in pd.unique(month_keys):
+            available = max(0, max_sideway_per_month - existing.get(str(month_key), 0))
+            candidates = np.flatnonzero(
+                (month_keys == month_key)
+                & (selected == sideway_index)
+                & ~np.isin(date_keys, list(excluded))
+            )
+            if len(candidates) <= available:
+                continue
+            directional_best = np.maximum(utilities[candidates, 0], utilities[candidates, 2])
+            sideway_advantage = utilities[candidates, sideway_index] - directional_best
+            order = np.argsort(-sideway_advantage, kind="stable")
+            rejected = candidates[order[available:]]
+            selected[rejected] = np.where(
+                utilities[rejected, CLASS_TO_INDEX["up"]] > utilities[rejected, CLASS_TO_INDEX["down"]],
+                CLASS_TO_INDEX["up"],
+                CLASS_TO_INDEX["down"],
+            )
+            overridden[rejected] = True
 
     expected_scores = utilities[np.arange(len(selected)), selected]
     margins = np.empty(len(selected), dtype=float)
@@ -801,6 +899,24 @@ def allocate_monthly_directions(
         margins[row_index] = expected_scores[row_index] - float(np.max(alternatives))
     directions = np.asarray(CLASS_NAMES, dtype=object)[selected]
     return directions, expected_scores, margins, overridden
+
+
+def execution_strategy_returns(
+    directions: Sequence[str],
+    daily_returns: Sequence[float],
+    round_trip_cost: float = ROUND_TRIP_COST,
+) -> np.ndarray:
+    """Return net open-to-close PnL for executable directional calls.
+
+    Every UTC daily call is an independent open-to-close trade, so both entry
+    and exit costs are charged. SIDEWAY is a forecast class and carries no
+    position.
+    """
+    direction_values = np.asarray(directions, dtype=object)
+    returns = np.asarray(daily_returns, dtype=float)
+    positions = np.where(direction_values == "up", 1.0, np.where(direction_values == "down", -1.0, 0.0))
+    costs = np.where(positions != 0, round_trip_cost, 0.0)
+    return positions * returns - costs
 
 
 def maximum_monthly_forecast_counts(
@@ -857,11 +973,7 @@ def select_decision_policy(
             | ((directions == "down") & (returns < 0))
             | ((directions == "sideway") & (np.abs(returns) <= SIDEWAY_LIMIT))
         ))
-        strategy = np.where(
-            directions == "up",
-            returns - TRADING_COST,
-            np.where(directions == "down", -returns - TRADING_COST, 0.0),
-        )
+        strategy = execution_strategy_returns(directions, returns)
         expectancy = float(np.mean(strategy))
         largest_share = float(pd.Series(directions).value_counts(normalize=True).max())
         diversity = 1 - largest_share
@@ -881,54 +993,90 @@ def select_decision_policy(
     return mode, penalty, diagnostics
 
 
-def build_pattern_registry(train: pd.DataFrame, minimum_occurrences: int = 8) -> pd.DataFrame:
+def _pattern_mask(frame: pd.DataFrame, expression: str, signal_lag_days: int = 0) -> pd.Series:
+    mask = frame.eval(expression, engine="python").fillna(False).astype(bool)
+    if signal_lag_days > 0:
+        mask = mask.shift(signal_lag_days, fill_value=False)
+    return mask
+
+
+def _balanced_pattern_tokens(
+    registry: pd.DataFrame,
+    limit: int,
+    score_column: str,
+) -> list[str]:
+    """Select a directionally diverse registry without inventing forecast quotas."""
+    selected: list[str] = []
+    per_direction_limit = max(1, math.ceil(limit / len(CLASS_NAMES)))
+    eligible = registry[registry["eligible"].astype(bool)].sort_values(score_column, ascending=False)
+    for direction in CLASS_NAMES:
+        rows = eligible[eligible["direction"] == direction].head(per_direction_limit)
+        selected.extend((rows["pattern_id"].astype(str) + "|" + rows["direction"].astype(str)).tolist())
+    if len(selected) < limit:
+        tokens = eligible["pattern_id"].astype(str) + "|" + eligible["direction"].astype(str)
+        selected.extend(token for token in tokens if token not in selected)
+    return selected[:limit]
+
+
+def build_pattern_registry(train: pd.DataFrame, minimum_occurrences: int = 6) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     direction_baselines = {
         direction: float(np.mean([grade_forecast(direction, value)[1] for value in train["daily_return"].dropna()]))
         for direction in CLASS_NAMES
     }
-    for pattern_id, (expression, label) in PATTERN_DEFINITIONS.items():
-        try:
-            mask = train.eval(expression, engine="python").fillna(False).astype(bool)
-        except Exception:
-            continue
-        sample = train.loc[mask & train["daily_return"].notna()]
-        if sample.empty:
-            continue
-        for direction in CLASS_NAMES:
-            grades = [grade_forecast(direction, value) for value in sample["daily_return"]]
-            scores = np.array([grade[1] for grade in grades], dtype=float)
-            statuses = [grade[0] for grade in grades]
-            smoothed_score = float((scores.sum() + 2.0) / (len(scores) + 4.0))
-            exact_accuracy = float((np.array(statuses) == "correct").mean())
-            baseline = direction_baselines[direction]
-            standard_error = math.sqrt(max(1e-8, baseline * (1 - baseline) / max(1, len(scores))))
-            z_score = (float(scores.mean()) - baseline) / standard_error
-            p_value = float(0.5 * math.erfc(z_score / math.sqrt(2)))
-            strategy = np.where(
-                direction == "up",
-                sample["daily_return"].to_numpy() - TRADING_COST,
-                np.where(direction == "down", -sample["daily_return"].to_numpy() - TRADING_COST, 0.0),
-            )
-            rows.append({
-                "pattern_id": pattern_id,
-                "pattern": label,
-                "expression": expression,
-                "direction": direction,
-                "occurrences": int(len(sample)),
-                "weighted_accuracy": smoothed_score,
-                "weighted_lcb": conservative_beta_lower_bound(
+    for base_pattern_id, (expression, label) in PATTERN_DEFINITIONS.items():
+        for signal_lag_days in range(4):
+            try:
+                mask = _pattern_mask(train, expression, signal_lag_days)
+            except Exception:
+                continue
+            sample = train.loc[mask & train["daily_return"].notna()]
+            if sample.empty:
+                continue
+            pattern_id = f"{base_pattern_id}__lead_{signal_lag_days}d"
+            pattern_label = label if signal_lag_days == 0 else f"{label} (+{signal_lag_days}d lead)"
+            for direction in CLASS_NAMES:
+                grades = [grade_forecast(direction, value) for value in sample["daily_return"]]
+                scores = np.array([grade[1] for grade in grades], dtype=float)
+                statuses = [grade[0] for grade in grades]
+                smoothed_score = float((scores.sum() + 2.0) / (len(scores) + 4.0))
+                exact_accuracy = float((np.array(statuses) == "correct").mean())
+                baseline = direction_baselines[direction]
+                standard_error = math.sqrt(max(1e-8, baseline * (1 - baseline) / max(1, len(scores))))
+                z_score = (float(scores.mean()) - baseline) / standard_error
+                p_value = float(0.5 * math.erfc(z_score / math.sqrt(2)))
+                strategy = execution_strategy_returns(
+                    np.full(len(sample), direction, dtype=object),
+                    sample["daily_return"].to_numpy(),
+                )
+                weighted_lcb = conservative_beta_lower_bound(
                     scores,
                     baseline,
                     prior_strength=12.0,
-                ),
-                "exact_accuracy": exact_accuracy,
-                "baseline_score": baseline,
-                "p_value": p_value,
-                "expectancy": float(np.mean(strategy)),
-                "last_seen": sample["date"].max(),
-                "examples": sample.sort_values("date").tail(6)["date"].dt.strftime("%Y-%m-%d").tolist(),
-            })
+                )
+                rows.append({
+                    "pattern_id": pattern_id,
+                    "pattern_family": base_pattern_id,
+                    "pattern": pattern_label,
+                    "expression": expression,
+                    "signal_lag_days": signal_lag_days,
+                    "duration_days": min(6, max(1, int(next(
+                        (token for token in ("6", "5", "3", "2") if token in base_pattern_id),
+                        "1",
+                    )))),
+                    "direction": direction,
+                    "occurrences": int(len(sample)),
+                    "weighted_accuracy": smoothed_score,
+                    "weighted_lcb": weighted_lcb,
+                    "exact_accuracy": exact_accuracy,
+                    "baseline_score": baseline,
+                    "accuracy_lift": smoothed_score - baseline,
+                    "conservative_lift": weighted_lcb - baseline,
+                    "p_value": p_value,
+                    "expectancy": float(np.mean(strategy)),
+                    "last_seen": sample["date"].max(),
+                    "examples": sample.sort_values("date").tail(6)["date"].dt.strftime("%Y-%m-%d").tolist(),
+                })
     registry = pd.DataFrame(rows)
     if registry.empty:
         return registry
@@ -939,18 +1087,29 @@ def build_pattern_registry(train: pd.DataFrame, minimum_occurrences: int = 8) ->
     )[::-1]
     registry["false_discovery_q"] = 1.0
     registry.loc[order, "false_discovery_q"] = np.clip(adjusted, 0, 1)
+    registry["statistically_supported"] = (
+        (registry["false_discovery_q"] <= 0.25)
+        & (registry["conservative_lift"] > 0)
+    )
     registry["eligible"] = (
         (registry["occurrences"] >= minimum_occurrences)
         & (registry["weighted_accuracy"] >= 0.36)
-        & ((registry["false_discovery_q"] <= 0.25) | (registry["occurrences"] >= 40))
     )
     registry["rank_score"] = (
-        registry["weighted_lcb"] * np.log1p(registry["occurrences"])
+        registry["conservative_lift"].clip(-0.5, 0.5) * 3.0
+        + registry["weighted_accuracy"] * 0.35
+        + np.log1p(registry["occurrences"]) * 0.06
         + np.clip(registry["expectancy"], -0.03, 0.03) * 8
+        + registry["statistically_supported"].astype(float) * 0.20
     )
-    registry = registry.sort_values(["eligible", "rank_score", "occurrences"], ascending=False).reset_index(drop=True)
+    registry = registry.sort_values(
+        ["eligible", "statistically_supported", "rank_score", "occurrences"],
+        ascending=False,
+    ).reset_index(drop=True)
     registry["rank"] = np.arange(1, len(registry) + 1)
-    registry["status"] = np.where(registry["eligible"] & (registry["rank"] <= 16), "active", "standby")
+    active_tokens = _balanced_pattern_tokens(registry, 16, "rank_score")
+    tokens = registry["pattern_id"].astype(str) + "|" + registry["direction"].astype(str)
+    registry["status"] = np.where(tokens.isin(active_tokens), "active", "standby")
     return registry
 
 
@@ -965,7 +1124,11 @@ def pattern_probabilities(frame: pd.DataFrame, registry: pd.DataFrame) -> np.nda
     action_votes = np.zeros((len(frame), 3), dtype=float)
     for _, rule in active.iterrows():
         try:
-            mask = frame.eval(str(rule["expression"]), engine="python").fillna(False).to_numpy(dtype=bool)
+            mask = _pattern_mask(
+                frame,
+                str(rule["expression"]),
+                int(rule.get("signal_lag_days", 0)),
+            ).to_numpy(dtype=bool)
         except Exception:
             continue
         if not mask.any():
@@ -979,6 +1142,29 @@ def pattern_probabilities(frame: pd.DataFrame, registry: pd.DataFrame) -> np.nda
     valid = totals > 0
     probabilities[valid] = (action_votes[valid] + 0.25) / (totals[valid, None] + 0.75)
     return probabilities
+
+
+def contextual_pattern_probabilities(
+    source: pd.DataFrame,
+    target: pd.DataFrame,
+    registry: pd.DataFrame,
+    lookback_days: int = 3,
+) -> np.ndarray:
+    """Evaluate lagged pattern signals with context preceding the target slice."""
+    if target.empty:
+        return np.empty((0, 3), dtype=float)
+    start = pd.Timestamp(target["date"].min()) - pd.Timedelta(days=lookback_days)
+    end = pd.Timestamp(target["date"].max())
+    context = source[source["date"].between(start, end)].copy().sort_values("date")
+    context_probabilities = pattern_probabilities(context, registry)
+    by_date = {
+        pd.Timestamp(date): probability
+        for date, probability in zip(context["date"], context_probabilities)
+    }
+    return np.vstack([
+        by_date.get(pd.Timestamp(date), np.full(3, 1 / 3, dtype=float))
+        for date in target["date"]
+    ])
 
 
 def _align_probabilities(model: object, probabilities: np.ndarray) -> np.ndarray:
@@ -1005,8 +1191,8 @@ def candidate_models(feature_columns: Sequence[str], random_state: int = 42) -> 
 def monthly_purged_folds(
     frame: pd.DataFrame,
     oos_start: pd.Timestamp = OOS_START,
-    purge_days: int = 5,
-    calibration_days: int = 90,
+    purge_days: int = 7,
+    calibration_days: int = 180,
     rolling_days: int | None = 1460,
     horizon_days: int = 1,
     embargo_days: int = 0,
@@ -1056,11 +1242,10 @@ def _decision_rows(
     policy_mode: str = "reward",
     sideway_penalty: float = 1.0,
 ) -> list[dict[str, object]]:
+    # Kept in the signature for artifact compatibility. Forecast coverage is now
+    # always 100%; abstention happens later as TRADE/FLAT, never as NO CALL.
+    del dynamic_no_call, volatility
     records: list[dict[str, object]] = []
-    monthly_abstentions: defaultdict[str, int] = defaultdict(int)
-    volatility_array = np.asarray(volatility if volatility is not None else np.full(len(dates), np.nan), dtype=float)
-    finite_volatility = volatility_array[np.isfinite(volatility_array)]
-    median_volatility = float(np.nanmedian(finite_volatility)) if finite_volatility.size else 0.03
     directions, expected_scores, margins, sideway_overrides = allocate_monthly_directions(
         dates, probabilities, matrix, policy_mode, sideway_penalty,
     )
@@ -1069,29 +1254,9 @@ def _decision_rows(
         expected_score = float(expected_scores[index])
         margin = float(margins[index])
         entropy = float(-np.sum(np.clip(probability, 1e-9, 1) * np.log(np.clip(probability, 1e-9, 1))) / np.log(3))
-        volatility_ratio = volatility_array[index] / median_volatility if median_volatility > 0 else 1.0
-        uncertainty_threshold = 0.965 - 0.015 * np.clip(volatility_ratio - 1, -1, 1)
-        month_key = pd.Timestamp(date).strftime("%Y-%m")
-        no_call = bool(
-            dynamic_no_call
-            and entropy >= uncertainty_threshold
-            and margin < 0.025
-            and monthly_abstentions[month_key] < MAX_NO_CALL_PER_MONTH
-        )
-        if no_call:
-            monthly_abstentions[month_key] += 1
-            status, score = "no-call", math.nan
-            strategy_return = 0.0
-            chosen = "no-call"
-        else:
-            status, score = grade_forecast(direction, float(daily_return))
-            chosen = direction
-            if direction == "up":
-                strategy_return = float(daily_return) - TRADING_COST
-            elif direction == "down":
-                strategy_return = -float(daily_return) - TRADING_COST
-            else:
-                strategy_return = 0.0
+        status, score = grade_forecast(direction, float(daily_return))
+        chosen = direction
+        strategy_return = float(execution_strategy_returns([direction], [daily_return])[0])
         directional_hit = bool(
             (direction == "up" and daily_return > 0)
             or (direction == "down" and daily_return < 0)
@@ -1216,7 +1381,9 @@ def _metric_summary(predictions: pd.DataFrame) -> pd.DataFrame:
     metrics = metrics.sort_values("rank_score", ascending=False).reset_index(drop=True)
     metrics["rank"] = np.arange(1, len(metrics) + 1)
     metrics["status"] = np.where(
-        (metrics["expectancy"] > 0) & (metrics["rank"] <= max(3, len(metrics) // 2)),
+        (metrics["expectancy_lcb"].fillna(-np.inf) > 0)
+        & (metrics["coverage"] >= 0.80)
+        & (metrics["rank"] <= max(3, len(metrics) // 2)),
         "active",
         "standby",
     )
@@ -1322,8 +1489,8 @@ def run_walk_forward(
 
         training_registry = build_pattern_registry(train)
         latest_registry = build_pattern_registry(pd.concat([train, calibration], ignore_index=True))
-        pattern_calibration = pattern_probabilities(policy_validation, training_registry)
-        pattern_test = pattern_probabilities(test, latest_registry)
+        pattern_calibration = contextual_pattern_probabilities(frame, policy_validation, training_registry)
+        pattern_test = contextual_pattern_probabilities(frame, test, latest_registry)
         pattern_rows = _decision_rows(
             policy_validation["date"], pattern_calibration, policy_validation["daily_return"], matrix,
             "Pattern Registry", fold.fold_id, False,
@@ -1354,7 +1521,20 @@ def run_walk_forward(
 
         if not candidates:
             continue
-        gated = candidates
+        gated = [
+            candidate for candidate in candidates
+            if candidate.calibration_score >= 0.30
+            and np.isfinite(candidate.calibration_log_loss)
+            and candidate.calibration_log_loss <= 1.35
+        ]
+        if len(gated) < min(3, len(candidates)):
+            gated = sorted(
+                candidates,
+                key=lambda candidate: (
+                    -candidate.calibration_score,
+                    candidate.calibration_log_loss,
+                ),
+            )[:min(3, len(candidates))]
         weights, stacking_diagnostics = learn_simplex_weights(
             [candidate.calibration_probabilities for candidate in gated],
             policy_validation["target"].astype(int).to_numpy(),
@@ -1411,6 +1591,10 @@ def run_walk_forward(
             "weighted_accuracy": float(calls["score"].mean()) if len(calls) else math.nan,
             "expectancy": float(calls["strategy_return"].mean()) if len(calls) else math.nan,
             "members": [candidate.name for candidate in gated],
+            "gated_out_members": [
+                candidate.name for candidate in candidates
+                if candidate.name not in {member.name for member in gated}
+            ],
             "weights": [float(value) for value in weights],
             "stacking_method": stacking_diagnostics["method"],
             "stacking_log_loss": stacking_diagnostics.get("loss"),
@@ -1548,7 +1732,11 @@ def _analog_forecast_bundle(
     return calibration_probabilities, probabilities, details
 
 
-def _matching_pattern_sets(frame: pd.DataFrame, registry: pd.DataFrame) -> list[list[dict[str, object]]]:
+def _matching_pattern_sets(
+    frame: pd.DataFrame,
+    registry: pd.DataFrame,
+    context_frame: pd.DataFrame | None = None,
+) -> list[list[dict[str, object]]]:
     matches: list[list[dict[str, object]]] = [[] for _ in range(len(frame))]
     if registry.empty:
         return matches
@@ -1558,12 +1746,23 @@ def _matching_pattern_sets(frame: pd.DataFrame, registry: pd.DataFrame) -> list[
     score_column = "adaptive_rank_score" if "adaptive_rank_score" in registry else "rank_score"
     accuracy_column = "adjusted_weighted_accuracy" if "adjusted_weighted_accuracy" in registry else "weighted_accuracy"
     eligible = registry[active_mask].sort_values(score_column, ascending=False)
+    source = context_frame if context_frame is not None else frame
+    target_lookup = {
+        pd.Timestamp(date): row_index for row_index, date in enumerate(frame["date"])
+    }
     for _, rule in eligible.iterrows():
         try:
-            mask = frame.eval(str(rule["expression"]), engine="python").fillna(False).to_numpy(dtype=bool)
+            mask = _pattern_mask(
+                source,
+                str(rule["expression"]),
+                int(rule.get("signal_lag_days", 0)),
+            ).to_numpy(dtype=bool)
         except Exception:
             continue
-        for row_index in np.flatnonzero(mask):
+        for source_index in np.flatnonzero(mask):
+            row_index = target_lookup.get(pd.Timestamp(source.iloc[int(source_index)]["date"]))
+            if row_index is None:
+                continue
             matches[int(row_index)].append({
                 "id": str(rule["pattern_id"]),
                 "name": str(rule["pattern"]),
@@ -1571,6 +1770,8 @@ def _matching_pattern_sets(frame: pd.DataFrame, registry: pd.DataFrame) -> list[
                 "occurrences": int(rule["occurrences"]),
                 "weighted_accuracy": float(rule[accuracy_column]),
                 "rank": int(rule["rank"]),
+                "signal_lag_days": int(rule.get("signal_lag_days", 0)),
+                "duration_days": int(rule.get("duration_days", 1)),
             })
     return matches
 
@@ -1589,18 +1790,20 @@ def fit_latest_forecasts(
     reserved_histories: Sequence[pd.DataFrame] | None = None,
     preferred_models: Sequence[str] | None = None,
     pattern_adjuster: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
+    forecast_lead_days: int = FORECAST_LEAD_DAYS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     labeled = frame[frame["target"].notna()].copy()
     if labeled.empty:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
     latest_market_date = labeled["date"].max()
-    future = frame[frame["date"] > latest_market_date].copy()
+    first_publishable_date = latest_market_date + pd.Timedelta(days=forecast_lead_days)
+    future = frame[frame["date"] >= first_publishable_date].copy()
     if max_future_days is not None:
         future = future.head(max_future_days)
     if future.empty:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    calibration_start = latest_market_date - pd.Timedelta(days=90)
-    training_end = calibration_start - pd.Timedelta(days=5)
+    calibration_start = latest_market_date - pd.Timedelta(days=180)
+    training_end = calibration_start - pd.Timedelta(days=7)
     training_start = training_end - pd.Timedelta(days=1460)
     train = labeled[labeled["date"].between(training_start, training_end, inclusive="left")].copy()
     calibration = labeled[labeled["date"].between(calibration_start, latest_market_date)].copy()
@@ -1689,8 +1892,8 @@ def fit_latest_forecasts(
     final_registry = build_pattern_registry(development)
     if pattern_adjuster is not None:
         final_registry = pattern_adjuster(final_registry)
-    pattern_calibration = pattern_probabilities(policy_validation, training_registry)
-    pattern_future = pattern_probabilities(future, final_registry)
+    pattern_calibration = contextual_pattern_probabilities(frame, policy_validation, training_registry)
+    pattern_future = contextual_pattern_probabilities(frame, future, final_registry)
     pattern_rows = _decision_rows(
         policy_validation["date"], pattern_calibration, policy_validation["daily_return"], matrix,
         "Pattern Registry", "latest", False,
@@ -1724,9 +1927,20 @@ def fit_latest_forecasts(
     if not candidates:
         return pd.DataFrame(), pd.DataFrame(), final_registry
     preferred = set(preferred_models or [])
-    selected = [candidate for candidate in candidates if not preferred or candidate.name in preferred]
+    quality_pool = [
+        candidate for candidate in candidates
+        if candidate.calibration_score >= 0.30
+        and np.isfinite(candidate.calibration_log_loss)
+        and candidate.calibration_log_loss <= 1.35
+    ]
+    if len(quality_pool) < min(3, len(candidates)):
+        quality_pool = sorted(
+            candidates,
+            key=lambda candidate: (-candidate.calibration_score, candidate.calibration_log_loss),
+        )[:min(3, len(candidates))]
+    selected = [candidate for candidate in quality_pool if not preferred or candidate.name in preferred]
     if not selected:
-        selected = candidates
+        selected = quality_pool
     weights, stacking_diagnostics = learn_simplex_weights(
         [candidate.calibration_probabilities for candidate in selected],
         policy_validation["target"].astype(int).to_numpy(),
@@ -1756,49 +1970,30 @@ def fit_latest_forecasts(
     policy_mode, sideway_penalty, _ = select_decision_policy(
         policy_probabilities, policy_returns, matrix, policy_dates,
     )
-    matching_pattern_sets = _matching_pattern_sets(future, final_registry)
-    locked_histories = list(
-        capacity_histories
-        if capacity_histories is not None
-        else ([policy_history] if policy_history is not None else [])
-    )
-    reservation_sources = list(reserved_histories) if reserved_histories is not None else locked_histories
-    existing_sideways = maximum_monthly_forecast_counts(locked_histories, "sideway")
-    existing_no_calls = maximum_monthly_forecast_counts(locked_histories, "no-call")
-    reserved_dates = reserved_forecast_dates(reservation_sources)
-    monthly_abstentions: defaultdict[str, int] = defaultdict(int, existing_no_calls)
+    pattern_context_start = pd.Timestamp(future["date"].min()) - pd.Timedelta(days=3)
+    pattern_context = frame[frame["date"].between(pattern_context_start, future["date"].max())]
+    matching_pattern_sets = _matching_pattern_sets(future, final_registry, pattern_context)
+    # Capacity histories remain accepted for backward-compatible callers, but
+    # statistical forecasts are no longer altered to satisfy monthly quotas.
+    del capacity_histories, reserved_histories
     forecast_rows: list[dict[str, object]] = []
-    finite_volatility = development["volatility_7"].dropna()
-    median_volatility = float(finite_volatility.median()) if len(finite_volatility) else 0.03
     directions, expected_scores, margins, sideway_overrides = allocate_monthly_directions(
         future["date"], ensemble, matrix, policy_mode, sideway_penalty,
-        existing_sideway_per_month=existing_sideways,
-        excluded_dates=reserved_dates,
     )
+    information_cutoff = (latest_market_date + pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
     for row_index, (_, row) in enumerate(future.iterrows()):
         probability = ensemble[row_index]
         direction = str(directions[row_index])
         expected_score = float(expected_scores[row_index])
         margin = float(margins[row_index])
         entropy = float(-np.sum(np.clip(probability, 1e-9, 1) * np.log(np.clip(probability, 1e-9, 1))) / np.log(3))
-        current_volatility = row.get("volatility_7", math.nan)
-        volatility_ratio = float(current_volatility / median_volatility) if np.isfinite(current_volatility) and median_volatility > 0 else 1.0
-        uncertainty_threshold = 0.965 - 0.015 * np.clip(volatility_ratio - 1, -1, 1)
-        month_key = pd.Timestamp(row["date"]).strftime("%Y-%m")
-        date_key = pd.Timestamp(row["date"]).strftime("%Y-%m-%d")
-        no_call = bool(
-            date_key not in reserved_dates
-            and entropy >= uncertainty_threshold
-            and margin < 0.025
-            and monthly_abstentions[month_key] < MAX_NO_CALL_PER_MONTH
-        )
-        if no_call:
-            monthly_abstentions[month_key] += 1
+        target_start = pd.Timestamp(row["date"]).strftime("%Y-%m-%dT00:00:00Z")
+        target_end = (pd.Timestamp(row["date"]) + pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
         forecast_rows.append({
             "date": pd.Timestamp(row["date"]),
             "lane": lane,
-            "forecast": "no-call" if no_call else direction,
-            "status": "no-call" if no_call else "pending",
+            "forecast": direction,
+            "status": "pending",
             "confidence": float(probability[CLASS_TO_INDEX[direction]]),
             "prob_down": float(probability[0]),
             "prob_sideway": float(probability[1]),
@@ -1817,6 +2012,10 @@ def fit_latest_forecasts(
             "policy_mode": policy_mode,
             "sideway_penalty": sideway_penalty,
             "sideway_cap_override": bool(sideway_overrides[row_index]),
+            "contract_version": 2,
+            "information_cutoff_utc": information_cutoff,
+            "target_start_utc": target_start,
+            "target_end_utc": target_end,
         })
     selected_weights = {candidate.name: float(weight) for candidate, weight in zip(selected, weights)}
     selection_rows: list[dict[str, object]] = []

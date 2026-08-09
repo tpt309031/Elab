@@ -67,6 +67,8 @@ export interface PatternReference {
   occurrences: number;
   weighted_accuracy: number;
   rank: number;
+  signal_lag_days?: number;
+  duration_days?: number;
 }
 
 export interface ForecastRow {
@@ -93,6 +95,17 @@ export interface ForecastRow {
   policy_mode?: string;
   sideway_penalty?: number;
   sideway_cap_override?: boolean;
+  contract_version?: number;
+  information_cutoff_utc?: string;
+  target_start_utc?: string;
+  target_end_utc?: string;
+  trade_action?: "up" | "down" | "flat";
+  trade_eligible?: boolean;
+  trade_gate_reason?: string;
+  expected_net_return?: number | null;
+  expectancy_lcb?: number | null;
+  execution_model?: string | null;
+  execution_model_forecast?: ForecastDirection | null;
 }
 
 export interface OfficialForecastRow extends ForecastRow {
@@ -145,6 +158,8 @@ export interface ModelMetric {
   adaptive_rank_score?: number;
   selection_change?: "promoted" | "demoted" | "retained" | "standby";
   replacement_reason?: string;
+  trade_eligible?: boolean;
+  drift_guard_active?: boolean;
 }
 
 export interface PatternMetric {
@@ -168,6 +183,19 @@ export interface PatternMetric {
   adaptive_rank_score?: number;
   selection_change?: "promoted" | "demoted" | "retained" | "standby";
   replacement_reason?: string;
+  pattern_family?: string;
+  signal_lag_days?: number;
+  duration_days?: number;
+  accuracy_lift?: number;
+  conservative_lift?: number;
+  statistically_supported?: boolean;
+}
+
+export interface SourceRevision {
+  recorded_at: string;
+  digest: string;
+  changed_sources: string[];
+  sources: Array<Record<string, string | number | null>>;
 }
 
 export interface LearningSummary {
@@ -311,6 +339,9 @@ export interface ResearchArtifact {
     generated_at: string;
     market_provider: string;
     latest_closed_utc: string;
+    pipeline_mode?: "fast-daily" | "full-research";
+    forecast_cutoff_utc?: string;
+    first_publishable_target_utc?: string;
     oos_start: string;
     oos_end: string;
     index_start: string;
@@ -322,7 +353,13 @@ export interface ResearchArtifact {
     scoring: Record<string, string>;
     availability_assumption: string;
     data_lineage?: Array<Record<string, string | number | boolean | null>>;
-    validation: Record<string, string | number | boolean>;
+    provenance?: {
+      status: "verified" | "research-only";
+      private_point_in_time_coverage: number;
+      warnings: string[];
+      revision_digest?: string;
+    };
+    validation: Record<string, string | number | boolean | null>;
   };
   health?: {
     market: MarketHealth;
@@ -378,7 +415,16 @@ export interface ResearchArtifact {
     drift?: {
       features: FeatureDrift[];
       classes: ClassDrift[];
-      performance: Record<string, { alarm: boolean; statistic: number; threshold: number; observations: number }>;
+      performance: Record<string, {
+        alarm: boolean;
+        action?: string;
+        statistic: number;
+        threshold: number;
+        observations: number;
+        baseline_loss?: number;
+        recent_loss?: number;
+        deterioration?: number;
+      }>;
     };
     event_definitions?: Record<string, string | number>;
   };
@@ -387,6 +433,7 @@ export interface ResearchArtifact {
     official_forecast_ledger: OfficialForecastRow[];
     event_evaluation_ledger?: EventEvaluation[];
     selection_history: Array<Record<string, unknown>>;
+    source_revisions?: SourceRevision[];
     evaluated_this_run: number;
     bootstrapped_this_run: number;
   };

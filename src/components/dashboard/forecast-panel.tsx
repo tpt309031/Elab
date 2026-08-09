@@ -25,14 +25,18 @@ function mergeForecastRows(...sources: ForecastRow[][]): ForecastRow[] {
 
 function buildFusionFutureRows(calendar: ForecastRow[], fullHybrid: ForecastRow[]): ForecastRow[] {
   const rows = new Map<string, ForecastRow>(
-    calendar.map((row) => [row.date, { ...row, lane: "Fusion ex-ante" }]),
+    calendar.map((row) => [row.date, { ...row, lane: "Index + Astro outlook" }]),
   );
   for (const row of fullHybrid) rows.set(row.date, row);
   return [...rows.values()].sort((left, right) => left.date.localeCompare(right.date));
 }
 
 export function ForecastPanel({ data }: ForecastPanelProps) {
-  const initialMonth = data.meta.latest_closed_utc.slice(0, 7);
+  const firstFutureDate = [
+    ...data.forecast.full_hybrid_next_session,
+    ...data.forecast.calendar,
+  ].filter((row) => row.date > data.meta.latest_closed_utc).sort((left, right) => left.date.localeCompare(right.date))[0]?.date;
+  const initialMonth = (firstFutureDate ?? data.meta.latest_closed_utc).slice(0, 7);
   const [lane, setLane] = useState<"calendar" | "full">("full");
   const [month, setMonth] = useState(initialMonth);
   const [direction, setDirection] = useState<ForecastDirection | "all">("all");
@@ -79,7 +83,7 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
           </Select>
         </div>
       </div>
-      {lane === "full" && <p className="border-l-2 border-primary bg-primary/5 px-3 py-2 text-xs text-muted-foreground">The next UTC session uses Full Hybrid. Later sessions use leakage-safe Fusion ex-ante signals from Index + Astro because future OHLCV is not yet observable.</p>}
+      {lane === "full" && <p className="border-l-2 border-primary bg-primary/5 px-3 py-2 text-xs text-muted-foreground">The first publishable UTC session uses Full Hybrid. Later dates are Index + Astro outlooks because future market bars do not exist yet. Every row remains a forecast; only rows marked TRADE pass the after-cost execution gate.</p>}
       <AccuracyBar rows={laneRows} />
       <ForecastCalendar month={month} rows={filtered} selectedDate={selected?.date} onMonthChange={setMonth} onSelect={setSelected} />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
@@ -96,7 +100,8 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
                   <Badge variant="outline">{selected.lane ?? (lane === "full" ? "Full Hybrid" : "Index + Astro")}</Badge>
                   <Badge className="uppercase">{selected.forecast}</Badge>
                   <Badge variant={selected.status === "wrong" ? "destructive" : "secondary"}>{selected.status}</Badge>
-                  {selected.sideway_cap_override && <Badge variant="outline">SIDEWAY cap override</Badge>}
+                  <Badge variant={selected.trade_eligible ? "default" : "outline"}>{selected.trade_eligible ? `TRADE ${selected.trade_action?.toUpperCase()}` : "FLAT"}</Badge>
+                  {selected.contract_version && <Badge variant="outline">CONTRACT V{selected.contract_version}</Badge>}
                   <span className="font-mono text-xs text-muted-foreground">actual {formatSignedPercent(selected.daily_return)}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-center">
@@ -104,7 +109,8 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
                   <div className="border border-border p-3"><p className="eyebrow">SIDEWAY</p><strong className="font-mono text-amber-300">{formatPercent(selected.prob_sideway)}</strong></div>
                   <div className="border border-border p-3"><p className="eyebrow">DOWN</p><strong className="font-mono text-red-400">{formatPercent(selected.prob_down)}</strong></div>
                 </div>
-                {selected.top_pattern && <p className="text-sm text-muted-foreground"><Target className="mr-2 inline size-4 text-primary" />Pattern #{selected.top_pattern.rank}: <span className="text-foreground">{selected.top_pattern.name}</span> · {selected.top_pattern.occurrences} occurrences · {formatPercent(selected.top_pattern.weighted_accuracy)}</p>}
+                {selected.top_pattern && <p className="text-sm text-muted-foreground"><Target className="mr-2 inline size-4 text-primary" />Pattern #{selected.top_pattern.rank}: <span className="text-foreground">{selected.top_pattern.name}</span> · {selected.top_pattern.occurrences} occurrences · {formatPercent(selected.top_pattern.weighted_accuracy)} · {selected.top_pattern.duration_days ?? 1}d shape / +{selected.top_pattern.signal_lag_days ?? 0}d lead</p>}
+                <div className="grid gap-2 border-t border-border pt-3 text-xs text-muted-foreground sm:grid-cols-2"><p><b className="text-foreground">Execution:</b> {selected.trade_gate_reason ?? "Legacy forecast without execution gate"}</p><p><b className="text-foreground">Timing:</b> information cutoff {selected.information_cutoff_utc?.slice(0, 10) ?? "legacy"}; target opens {selected.target_start_utc?.slice(0, 10) ?? selected.date} UTC.</p></div>
               </div>
             ) : <p className="text-sm text-muted-foreground">Select a calendar session to inspect its probability stack, pattern evidence, and analogs.</p>}
           </div>

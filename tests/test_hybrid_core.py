@@ -9,11 +9,46 @@ import research.hybrid_core as hybrid_core
 from research.hybrid_core import (
     allocate_monthly_directions,
     build_feature_frame,
+    build_pattern_registry,
     grade_forecast,
     maximum_monthly_forecast_counts,
     monthly_purged_folds,
     reserved_forecast_dates,
 )
+
+
+def test_pattern_registry_learns_signal_lead_without_delayed_grades(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dates = pd.date_range("2024-01-01", periods=160, freq="D")
+    pulse = np.zeros(len(dates))
+    returns = np.zeros(len(dates))
+    for position in range(5, 145, 10):
+        pulse[position] = 1
+        returns[position + 2] = 0.04
+    frame = pd.DataFrame({
+        "date": dates,
+        "pulse": pulse,
+        "daily_return": returns,
+        "target": [hybrid_core.direction_label(value) for value in returns],
+    })
+    monkeypatch.setattr(hybrid_core, "PATTERN_DEFINITIONS", {
+        "pulse": ("pulse > 0", "Synthetic pulse"),
+    })
+
+    registry = build_pattern_registry(frame)
+    lead_two = registry[
+        (registry["pattern_id"] == "pulse__lead_2d")
+        & (registry["direction"] == "up")
+    ].iloc[0]
+    same_day = registry[
+        (registry["pattern_id"] == "pulse__lead_0d")
+        & (registry["direction"] == "up")
+    ].iloc[0]
+
+    assert lead_two["weighted_accuracy"] > same_day["weighted_accuracy"]
+    assert lead_two["signal_lag_days"] == 2
+    assert lead_two["eligible"]
 
 
 def test_exact_scoring_boundaries() -> None:
@@ -29,7 +64,7 @@ def test_exact_scoring_boundaries() -> None:
     assert grade_forecast("sideway", 0.0101) == ("wrong", 0.0)
 
 
-def test_market_features_are_shifted_one_closed_candle() -> None:
+def test_market_features_respect_two_session_publication_lead() -> None:
     dates = pd.date_range("2023-01-01", periods=120, freq="D")
     close = pd.Series(np.linspace(100, 160, len(dates)))
     market = pd.DataFrame({
@@ -52,23 +87,18 @@ def test_market_features_are_shifted_one_closed_candle() -> None:
     })
     frame, _ = build_feature_frame(indices, market, astro)
     expected = close.pct_change().iloc[80]
-    observed = frame.loc[frame["date"] == dates[81], "market_return_1"].iloc[0]
+    observed = frame.loc[frame["date"] == dates[82], "market_return_1"].iloc[0]
     assert np.isclose(observed, expected)
 
 
-def test_monthly_sideway_calls_are_capped_at_eight() -> None:
+def test_forecast_policy_does_not_force_a_monthly_sideway_quota() -> None:
     dates = pd.date_range("2026-01-01", periods=40, freq="D")
     probabilities = np.tile(np.array([0.20, 0.60, 0.20]), (len(dates), 1))
     directions, _, _, overrides = allocate_monthly_directions(
         dates, probabilities, np.eye(3), policy_mode="probability",
     )
-    result = pd.DataFrame({"date": dates, "forecast": directions, "override": overrides})
-    monthly_sideway = result.assign(month=result["date"].dt.strftime("%Y-%m")).groupby("month")["forecast"].apply(
-        lambda values: int((values == "sideway").sum())
-    )
-    assert (monthly_sideway <= 8).all()
-    assert monthly_sideway.loc["2026-01"] == 8
-    assert result["override"].any()
+    assert all(direction == "sideway" for direction in directions)
+    assert not overrides.any()
 
 
 def test_future_sideway_capacity_respects_locked_monthly_calls() -> None:
@@ -79,6 +109,7 @@ def test_future_sideway_capacity_respects_locked_monthly_calls() -> None:
         probabilities,
         np.eye(3),
         policy_mode="probability",
+        max_sideway_per_month=8,
         existing_sideway_per_month={"2026-07": 8},
         excluded_dates={"2026-07-13"},
     )
@@ -116,6 +147,7 @@ def test_full_next_session_consumes_shared_fusion_sideway_capacity() -> None:
         probabilities,
         np.eye(3),
         policy_mode="probability",
+        max_sideway_per_month=8,
         existing_sideway_per_month=used,
         excluded_dates=reserved,
     )

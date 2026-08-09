@@ -22,6 +22,7 @@ export function ModelPanel({ data }: ModelPanelProps) {
   const selection = lane === "full" ? data.models.full_hybrid_latest_selection : data.models.calendar_latest_selection;
   const laneName = lane === "full" ? "Full Hybrid" : "Calendar";
   const metrics = data.performance.model_rankings.filter((row) => row.lane === laneName);
+  const executableModels = metrics.filter((row) => row.status === "active" && row.trade_eligible);
   const learning = data.learning?.summary;
   const chart = importance.slice(0, 16).map((row) => ({ feature: humanizeFeature(row.feature), importance: Math.max(0, row.importance) }));
   return (
@@ -55,8 +56,8 @@ export function ModelPanel({ data }: ModelPanelProps) {
           <Card>
             <CardHeader><CardTitle className="text-sm">Latest calibration selection</CardTitle></CardHeader>
             <CardContent className="space-y-3">{selection.map((row) => {
-              const active = row.status === "active";
-              return <div key={String(row.model)} className="space-y-2 border-b border-border pb-3 last:border-0"><div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-sm">{active ? <CheckCircle2 className="size-4 text-emerald-400" /> : <CircleOff className="size-4 text-muted-foreground" />}{String(row.model)}</span><span className="flex gap-1"><Badge variant="outline">#{Number(row.rank) || "—"}</Badge><Badge variant={active ? "default" : "secondary"}>{String(row.status)}</Badge></span></div><Progress value={Number(row.weight) * 100} /><div className="flex justify-between font-mono text-[10px] text-muted-foreground"><span>cal {(Number(row.calibration_score) * 100).toFixed(1)}% · live n={Number(row.live_samples) || 0}</span><span>{String(row.selection_change ?? "standby")}</span><span>weight {(Number(row.weight) * 100).toFixed(1)}%</span></div></div>;
+              const active = row.production_status === "active" && Boolean(row.trade_eligible);
+              return <div key={String(row.model)} className="space-y-2 border-b border-border pb-3 last:border-0"><div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-sm">{active ? <CheckCircle2 className="size-4 text-emerald-400" /> : <CircleOff className="size-4 text-muted-foreground" />}{String(row.model)}</span><span className="flex gap-1"><Badge variant="outline">#{Number(row.rank) || "—"}</Badge><Badge variant={active ? "default" : "secondary"}>{active ? "trade eligible" : String(row.production_status ?? "standby")}</Badge></span></div><Progress value={Number(row.weight) * 100} /><div className="flex justify-between font-mono text-[10px] text-muted-foreground"><span>cal {(Number(row.calibration_score) * 100).toFixed(1)}% · live n={Number(row.live_samples) || 0}</span><span>{String(row.selection_change ?? "standby")}</span><span>weight {(Number(row.weight) * 100).toFixed(1)}%</span></div></div>;
             })}</CardContent>
           </Card>
           <Card>
@@ -65,6 +66,7 @@ export function ModelPanel({ data }: ModelPanelProps) {
           </Card>
         </div>
       </div>
+      {!executableModels.length && <div className="flex gap-2 border border-amber-500/25 bg-amber-500/5 p-3 text-xs text-amber-100/80"><CircleOff className="size-4 shrink-0 text-amber-400" /><span>No {laneName} candidate currently has a positive after-cost expectancy lower bound. Forecasts continue, but execution remains FLAT.</span></div>}
       <Card>
         <CardHeader><CardTitle className="text-sm">Champion and challenger evidence</CardTitle></CardHeader>
         <CardContent className="overflow-x-auto p-0">

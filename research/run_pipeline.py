@@ -13,9 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from research.hybrid_core import (
+    FORECAST_LEAD_DAYS,
     MAX_NO_CALL_PER_MONTH,
     MAX_SIDEWAY_PER_MONTH,
     OOS_START,
+    ROUND_TRIP_COST,
     build_feature_frame,
     equity_curve,
     feature_heatmap,
@@ -51,6 +53,7 @@ from research.learning import (
     grade_learning_state,
     learning_summary,
     load_learning_state,
+    record_source_revision,
     record_selection_snapshot,
     serialize_learning_state,
 )
@@ -60,6 +63,11 @@ from research.model_candidates import model_availability_rows
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build leakage-safe hybrid BTC research artifacts")
     parser.add_argument("--deep", action="store_true", help="Evaluate LSTM and Transformer candidates")
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Reuse the latest verified OOS research and run only daily grade/rerank/publish work",
+    )
     parser.add_argument("--no-refresh", action="store_true", help="Use the committed daily market cache")
     parser.add_argument("--output", type=Path, default=ROOT / "public" / "data" / "hybrid_research.json")
     return parser.parse_args()
@@ -117,6 +125,67 @@ def _compact_ohlcv(market: pd.DataFrame) -> list[dict[str, object]]:
     return output.replace({np.nan: None}).to_dict("records")
 
 
+def _pick_fields(rows: list[dict[str, object]], fields: tuple[str, ...]) -> list[dict[str, object]]:
+    return [
+        {field: row.get(field) for field in fields if field in row}
+        for row in rows
+        if isinstance(row, dict)
+    ]
+
+
+def _core_payload(payload: dict[str, object]) -> dict[str, object]:
+    """Build the fast initial-load artifact; detailed research remains lazy-loaded."""
+    core = dict(payload)
+    latest_closed = str(payload.get("meta", {}).get("latest_closed_utc", "9999-12-31"))
+    core["market"] = [
+        row for row in payload.get("market", [])
+        if isinstance(row, dict) and str(row.get("timestamp", "")) >= OOS_START.strftime("%Y-%m-%d")
+    ]
+    core["indices"] = [
+        row for row in payload.get("indices", [])
+        if isinstance(row, dict) and str(row.get("date", "")) <= latest_closed
+    ]
+    forecast_fields = (
+        "date", "lane", "model", "fold", "forecast", "status", "score", "daily_return",
+        "strategy_return", "confidence", "prob_down", "prob_sideway", "prob_up", "expected_score",
+        "decision_margin", "entropy", "top_pattern",
+        "policy_mode", "sideway_penalty", "sideway_cap_override", "contract_version",
+        "information_cutoff_utc", "target_start_utc", "target_end_utc", "trade_action",
+        "trade_eligible", "trade_gate_reason", "expected_net_return", "expectancy_lcb",
+        "execution_model", "execution_model_forecast",
+    )
+    forecast = dict(payload.get("forecast", {}))
+    forecast["calendar"] = _pick_fields(list(forecast.get("calendar", []))[:45], forecast_fields)
+    forecast["historical_calendar_oos"] = []
+    for key in ("historical_full_hybrid_oos",):
+        forecast[key] = _pick_fields(list(forecast.get(key, [])), forecast_fields)
+    core["forecast"] = forecast
+    performance = dict(payload.get("performance", {}))
+    for key in ("calendar_folds", "full_hybrid_folds"):
+        performance[key] = list(performance.get(key, []))[-12:]
+    for key in ("calendar_equity", "full_hybrid_equity"):
+        performance[key] = list(performance.get(key, []))[-365:]
+    core["performance"] = performance
+    patterns = dict(payload.get("patterns", {}))
+    patterns["calendar"] = list(patterns.get("calendar", []))[:32]
+    patterns["full_hybrid"] = list(patterns.get("full_hybrid", []))[:32]
+    core["patterns"] = patterns
+    learning = dict(payload.get("learning", {}))
+    official_fields = forecast_fields + (
+        "forecast_id", "target_date", "issued_at", "closed_through_at_issue", "actual_return",
+        "evaluated_at", "immutable_digest", "executed_strategy_return",
+    )
+    learning["official_forecast_ledger"] = _pick_fields(
+        list(learning.get("official_forecast_ledger", [])),
+        official_fields,
+    )
+    learning["event_evaluation_ledger"] = []
+    learning["selection_history"] = list(learning.get("selection_history", []))[-7:]
+    learning["source_revisions"] = list(learning.get("source_revisions", []))[-20:]
+    core["learning"] = learning
+    return core
+
+
 def _availability(include_deep: bool) -> list[dict[str, object]]:
     import importlib.util
 
@@ -137,6 +206,50 @@ def _read_previous_artifact(path: Path) -> dict[str, object]:
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _restore_frame(
+    rows: object,
+    date_columns: tuple[str, ...] = ("date",),
+) -> pd.DataFrame:
+    frame = pd.DataFrame(rows if isinstance(rows, list) else [])
+    for column in date_columns:
+        if column in frame:
+            frame[column] = pd.to_datetime(frame[column], errors="coerce").dt.normalize()
+    return frame
+
+
+def _restore_backtest(payload: dict[str, object], lane: str) -> object | None:
+    """Hydrate the immutable weekly OOS result for a fast daily publication run."""
+    from research.hybrid_core import BacktestResult
+
+    forecast_payload = payload.get("forecast", {})
+    performance = payload.get("performance", {})
+    patterns = payload.get("patterns", {})
+    explainability = payload.get("explainability", {})
+    if not all(isinstance(item, dict) for item in (forecast_payload, performance, patterns, explainability)):
+        return None
+    calendar_lane = lane == "Calendar"
+    forecast_key = "historical_calendar_oos" if calendar_lane else "historical_full_hybrid_oos"
+    fold_key = "calendar_folds" if calendar_lane else "full_hybrid_folds"
+    no_call_key = "calendar_no_calls" if calendar_lane else "full_hybrid_no_calls"
+    registry_key = "calendar" if calendar_lane else "full_hybrid"
+    forecasts = _restore_frame(forecast_payload.get(forecast_key))
+    rankings = _restore_frame(performance.get("model_rankings"), ())
+    if "lane" in rankings:
+        rankings = rankings[rankings["lane"] == lane].drop(columns="lane").reset_index(drop=True)
+    folds = _restore_frame(
+        performance.get(fold_key),
+        ("train_start", "train_end", "calibration_fit_end", "policy_start", "calibration_end", "test_start", "test_end"),
+    )
+    importance = _restore_frame(explainability.get(registry_key), ())
+    registry = _restore_frame(patterns.get(registry_key), ("last_seen",))
+    no_calls = _restore_frame(performance.get(no_call_key), ())
+    if forecasts.empty or rankings.empty:
+        return None
+    # Candidate-level rows are not needed during fast publication; weekly OOS
+    # research remains authoritative for metrics and ranking priors.
+    return BacktestResult(forecasts, pd.DataFrame(), rankings, folds, importance, registry, no_calls)
 
 
 def _bootstrap_published_forecasts(state: dict[str, object], payload: dict[str, object]) -> int:
@@ -163,9 +276,11 @@ def _bootstrap_published_forecasts(state: dict[str, object], payload: dict[str, 
         if not candidates:
             continue
         selection = model_payload.get(selection_key, [])
+        legacy_forecast = dict(candidates[0])
+        legacy_forecast.setdefault("contract_version", 1)
         added += int(append_official_forecast(
             state,
-            candidates[0],
+            legacy_forecast,
             lane,
             issued_at,
             closed_through,
@@ -180,10 +295,69 @@ def _enrich_selection(selection: pd.DataFrame, metrics: pd.DataFrame) -> pd.Data
     columns = [
         "model", "rank", "live_samples", "live_weighted_accuracy", "live_directional_accuracy",
         "live_expectancy", "adjusted_weighted_accuracy", "adaptive_rank_score", "selection_change",
-        "replacement_reason",
+        "replacement_reason", "expectancy", "expectancy_lcb", "trade_eligible", "status",
     ]
     available = [column for column in columns if column in metrics]
-    return selection.merge(metrics[available], on="model", how="left")
+    metric_view = metrics[available].rename(columns={"status": "production_status"})
+    return selection.merge(metric_view, on="model", how="left")
+
+
+def _apply_trade_gate(
+    forecasts: pd.DataFrame,
+    metrics: pd.DataFrame,
+    selection: pd.DataFrame,
+) -> pd.DataFrame:
+    """Keep the daily forecast, but execute only robust positive-expectancy signals."""
+    if forecasts.empty:
+        return forecasts
+    output = forecasts.copy()
+    eligible = metrics.copy()
+    if not eligible.empty:
+        ensemble_mask = eligible["model"].astype(str).str.contains("Ensemble", case=False, na=False)
+        eligible = eligible[
+            ~ensemble_mask
+            & (eligible.get("status", "standby") == "active")
+            & (pd.to_numeric(eligible.get("expectancy_lcb"), errors="coerce") > 0)
+        ].sort_values("rank")
+    champion = eligible.iloc[0] if not eligible.empty else None
+    champion_name = str(champion["model"]) if champion is not None else None
+    champion_selection = (
+        selection[selection["model"] == champion_name].iloc[0]
+        if (
+            champion_name is not None
+            and not selection.empty
+            and "model" in selection
+            and champion_name in set(selection["model"])
+        )
+        else None
+    )
+    champion_direction = (
+        str(champion_selection.get("next_forecast")) if champion_selection is not None else None
+    )
+    for index, row in output.iterrows():
+        direction = str(row.get("forecast"))
+        direction_agrees = champion_direction == direction
+        executable = champion is not None and direction in {"up", "down"} and direction_agrees
+        output.at[index, "trade_action"] = direction if executable else "flat"
+        output.at[index, "trade_eligible"] = bool(executable)
+        output.at[index, "execution_model"] = champion_name
+        output.at[index, "execution_model_forecast"] = champion_direction
+        output.at[index, "expected_net_return"] = (
+            float(champion["expectancy"]) if executable else np.nan
+        )
+        output.at[index, "expectancy_lcb"] = (
+            float(champion["expectancy_lcb"]) if executable else np.nan
+        )
+        if champion is None:
+            reason = "FLAT: no candidate has a positive out-of-sample net-expectancy lower bound"
+        elif direction == "sideway":
+            reason = "FLAT: SIDEWAY is an outlook class, not a directional trade"
+        elif not direction_agrees:
+            reason = f"FLAT: {champion_name} does not confirm the ensemble direction"
+        else:
+            reason = f"TRADE: {champion_name} confirms direction and passed the after-cost expectancy gate"
+        output.at[index, "trade_gate_reason"] = reason
+    return output
 
 
 def main() -> None:
@@ -264,29 +438,45 @@ def main() -> None:
         "volatility", "astro_composite_change_1", "astro_volatility_z30", "dow_sin", "dow_cos",
     ]
 
-    calendar = run_walk_forward(
-        frame,
-        groups["calendar"],
-        analog_columns,
-        "Calendar",
-        groups["sequence_calendar"],
-        len(groups["sequence_calendar_base"]),
-        args.deep,
-    )
-    full = run_walk_forward(
-        frame,
-        groups["full"],
-        analog_columns + ["market_return_1", "volatility_7", "rsi14", "atr14_pct"],
-        "Full Hybrid",
-        groups["sequence_full"],
-        len(groups["sequence_full_base"]),
-        args.deep,
-    )
+    calendar = _restore_backtest(previous_payload, "Calendar") if args.fast else None
+    full = _restore_backtest(previous_payload, "Full Hybrid") if args.fast else None
+    pipeline_mode = "fast-daily" if calendar is not None and full is not None else "full-research"
+    if calendar is None or full is None:
+        calendar = run_walk_forward(
+            frame,
+            groups["calendar"],
+            analog_columns,
+            "Calendar",
+            groups["sequence_calendar"],
+            len(groups["sequence_calendar_base"]),
+            args.deep,
+        )
+        full = run_walk_forward(
+            frame,
+            groups["full"],
+            analog_columns + ["market_return_1", "volatility_7", "rsi14", "atr14_pct"],
+            "Full Hybrid",
+            groups["sequence_full"],
+            len(groups["sequence_full_base"]),
+            args.deep,
+        )
+    performance_drift = {
+        "calendar": page_hinkley_alarm(1 - calendar.forecasts["score"].dropna().to_numpy(dtype=float)),
+        "full_hybrid": page_hinkley_alarm(1 - full.forecasts["score"].dropna().to_numpy(dtype=float)),
+    }
     calendar.model_metrics = apply_live_model_ranking(
-        calendar.model_metrics, learning_state, "Calendar", as_of_closed=latest_closed,
+        calendar.model_metrics,
+        learning_state,
+        "Calendar",
+        as_of_closed=latest_closed,
+        execution_suspended=bool(performance_drift["calendar"]["alarm"]),
     )
     full.model_metrics = apply_live_model_ranking(
-        full.model_metrics, learning_state, "Full Hybrid", as_of_closed=latest_closed,
+        full.model_metrics,
+        learning_state,
+        "Full Hybrid",
+        as_of_closed=latest_closed,
+        execution_suspended=bool(performance_drift["full_hybrid"]["alarm"]),
     )
     calendar_preferred = calendar.model_metrics.loc[
         (calendar.model_metrics["status"] == "active")
@@ -342,6 +532,8 @@ def main() -> None:
     )
     calendar_selection = _enrich_selection(calendar_selection, calendar.model_metrics)
     full_selection = _enrich_selection(full_selection, full.model_metrics)
+    calendar_future = _apply_trade_gate(calendar_future, calendar.model_metrics, calendar_selection)
+    full_future = _apply_trade_gate(full_future, full.model_metrics, full_selection)
     if not calendar_future.empty:
         append_official_forecast(
             learning_state,
@@ -395,13 +587,10 @@ def main() -> None:
     ], ignore_index=True)
     feature_drift = feature_drift_rows(frame, groups["full"])
     class_drift = class_drift_rows(frame)
-    performance_drift = {
-        "calendar": page_hinkley_alarm(1 - calendar.forecasts["score"].dropna().to_numpy(dtype=float)),
-        "full_hybrid": page_hinkley_alarm(1 - full.forecasts["score"].dropna().to_numpy(dtype=float)),
-    }
     target_accuracy = 0.70
     eligible_metrics = all_metrics[(all_metrics["expectancy"] > 0) & (all_metrics["coverage"] >= 0.8)]
     achieved = eligible_metrics["directional_accuracy"].max() if not eligible_metrics.empty else 0
+    oos_end = max(calendar.forecasts["date"].max(), full.forecasts["date"].max())
     explanation_methods = sorted(set(
         calendar.feature_importance.get("method", pd.Series(dtype=str)).dropna().astype(str).tolist()
         + full.feature_importance.get("method", pd.Series(dtype=str)).dropna().astype(str).tolist()
@@ -437,6 +626,7 @@ def main() -> None:
             len(market),
             market["timestamp"].min(),
             market["timestamp"].max(),
+            availability_mode="closed-bar-enforced",
         ),
     ]
     for timeframe, intraday_frame in intraday_frames:
@@ -448,18 +638,35 @@ def main() -> None:
                 len(intraday_frame),
                 intraday_frame["timestamp"].min(),
                 intraday_frame["timestamp"].max(),
+                availability_mode="closed-bar-enforced",
             ))
     data_lineage.extend(external_lineage)
-    forecast_cutoff = (latest_closed + pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+    private_lineage = [
+        item for item in data_lineage
+        if str(item.get("source", "")).startswith("private-") or item.get("source") == "astro-scores"
+    ]
+    explicit_rows = sum(int(item.get("explicit_availability_rows", 0)) for item in private_lineage)
+    private_rows = sum(int(item.get("rows", 0)) for item in private_lineage)
+    point_in_time_coverage = explicit_rows / private_rows if private_rows else 0.0
+    provenance_warnings = [
+        f"{item['source']} has no complete available_at history; historical results assume prepublication"
+        for item in private_lineage
+        if item.get("availability_mode") != "explicit"
+    ]
+    record_source_revision(learning_state, data_lineage, run_at)
+    information_cutoff = (latest_closed + pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+    first_target = (latest_closed + pd.Timedelta(days=FORECAST_LEAD_DAYS)).strftime("%Y-%m-%dT00:00:00Z")
     payload = {
         "meta": {
-            "schema_version": 4,
+            "schema_version": 5,
             "generated_at": run_at,
             "market_provider": provider,
             "latest_closed_utc": latest_closed.strftime("%Y-%m-%d"),
-            "forecast_cutoff_utc": forecast_cutoff,
+            "pipeline_mode": pipeline_mode,
+            "forecast_cutoff_utc": information_cutoff,
+            "first_publishable_target_utc": first_target,
             "oos_start": OOS_START.strftime("%Y-%m-%d"),
-            "oos_end": latest_closed.strftime("%Y-%m-%d"),
+            "oos_end": pd.Timestamp(oos_end).strftime("%Y-%m-%d"),
             "index_start": indices["date"].min().strftime("%Y-%m-%d"),
             "index_end": indices["date"].max().strftime("%Y-%m-%d"),
             "target_directional_accuracy": target_accuracy,
@@ -471,24 +678,37 @@ def main() -> None:
                 "down": "correct <= -3%; partial > -3% to -0.1%; wrong >= 0%",
                 "sideway": "correct within -1% to +1%; otherwise wrong; no partial",
             },
-            "availability_assumption": "Explicit available_at timestamps are enforced before the target UTC session. Sources without timestamps are marked prepublished-imputed; market and intraday features use only prior closed bars.",
+            "availability_assumption": "Explicit available_at timestamps are enforced before the target UTC session. Sources without timestamps are marked prepublished-imputed; market and intraday features lag two sessions so the daily artifact is fully available before its target opens.",
             "data_lineage": data_lineage,
+            "provenance": {
+                "status": "verified" if not provenance_warnings else "research-only",
+                "private_point_in_time_coverage": point_in_time_coverage,
+                "warnings": provenance_warnings,
+                "revision_digest": learning_state.get("source_revisions", [{}])[-1].get("digest"),
+            },
             "validation": {
                 "outer": "monthly rolling walk-forward",
                 "rolling_train_days": 1460,
-                "purge_days": 5,
-                "calibration_days": 90,
+                "purge_days": 7,
+                "calibration_days": 180,
                 "calibration_partition": "first 67% calibrator fit; final 33% policy and ensemble selection",
                 "calibration_methods": "identity, sigmoid, temperature, isotonic when sample-gated",
                 "stacking": "non-negative simplex weights learned only from pre-test OOS policy validation probabilities",
                 "maximum_no_calls_per_month": MAX_NO_CALL_PER_MONTH,
                 "maximum_sideway_calls_per_month": MAX_SIDEWAY_PER_MONTH,
-                "transaction_cost_bps": 5,
+                "one_way_transaction_cost_bps": int(ROUND_TRIP_COST * 10_000 / 2),
+                "round_trip_transaction_cost_bps": int(ROUND_TRIP_COST * 10_000),
                 "daily_evaluation_utc": "03:20",
                 "official_forecasts_are_immutable": True,
+                "official_forecast_contract": "issued before target UTC open with a two-session lead",
+                "trade_gate": "directional execution requires positive OOS net-expectancy lower bound after costs",
                 "daily_and_event_grades_are_independent": True,
                 "minimum_live_grades_for_promotion": 20,
                 "production_promotion_cadence": "monthly",
+                "oos_refit_cadence": "weekly full research; daily grade/rerank/publish reuses the latest verified OOS artifact",
+                "drift_action": "recent Page-Hinkley deterioration suspends execution but preserves forecasts",
+                "pattern_lead_search_days": 3,
+                "pattern_shape_duration_days": "1-6",
             },
         },
         "health": {
@@ -561,6 +781,7 @@ def main() -> None:
             "official_forecast_ledger": learning_state.get("forecasts", []),
             "event_evaluation_ledger": learning_state.get("event_evaluations", []),
             "selection_history": learning_state.get("selection_history", []),
+            "source_revisions": learning_state.get("source_revisions", []),
             "evaluated_this_run": evaluated_forecasts,
             "events_evaluated_this_run": evaluated_events,
             "bootstrapped_this_run": bootstrapped_forecasts,
@@ -571,16 +792,22 @@ def main() -> None:
     args.output.write_text(content, encoding="utf-8")
     mirror = ROOT / "data" / "hybrid_research.json"
     mirror.write_text(content, encoding="utf-8")
+    core_content = json.dumps(_core_payload(payload), ensure_ascii=True, separators=(",", ":"))
+    core_output = args.output.with_name("hybrid_research_core.json")
+    core_output.write_text(core_content, encoding="utf-8")
+    (ROOT / "data" / "hybrid_research_core.json").write_text(core_content, encoding="utf-8")
     learning_state_path.write_text(serialize_learning_state(learning_state), encoding="utf-8")
     print(json.dumps({
         "output": str(args.output),
         "bytes": len(content),
+        "core_bytes": len(core_content),
         "latest_closed_utc": latest_closed.strftime("%Y-%m-%d"),
         "calendar_oos_rows": len(calendar.forecasts),
         "full_hybrid_oos_rows": len(full.forecasts),
         "future_rows": len(calendar_future),
         "achieved_directional_accuracy": round(float(achieved), 4),
         "target_reached": bool(achieved >= target_accuracy),
+        "pipeline_mode": pipeline_mode,
         "evaluated_forecasts": evaluated_forecasts,
         "evaluated_events": evaluated_events,
         "official_ledger_rows": len(learning_state.get("forecasts", [])),

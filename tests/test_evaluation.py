@@ -8,7 +8,19 @@ from research.evaluation import (
     ProbabilityCalibrator,
     expected_calibration_error,
     moving_block_confidence_intervals,
+    page_hinkley_alarm,
 )
+
+
+def test_page_hinkley_only_suspends_on_recent_material_deterioration() -> None:
+    stable = page_hinkley_alarm([0.3] * 300)
+    degraded = page_hinkley_alarm([0.25] * 260 + [0.85] * 60)
+
+    assert stable["alarm"] is False
+    assert stable["action"] == "monitor"
+    assert degraded["alarm"] is True
+    assert degraded["action"] == "suspend-execution"
+    assert degraded["recent_loss"] > degraded["baseline_loss"]
 from research.learning import (
     append_official_forecast,
     apply_live_model_ranking,
@@ -85,8 +97,8 @@ def test_event_grading_is_separate_from_daily_grade() -> None:
             "matching_patterns": [{"id": "lead", "name": "Lead", "direction": "up", "rank": 1}],
         },
         "Full Hybrid",
-        "2026-07-05T00:05:00Z",
-        "2026-07-04",
+        "2026-07-04T03:20:00Z",
+        "2026-07-03",
         [{"model": "Challenger", "next_forecast": "up", "status": "standby"}],
     )
     dates = pd.date_range("2026-07-01", periods=14, freq="D")
@@ -126,7 +138,8 @@ def _model_metric(model: str, rank_score: float) -> dict[str, float | int | str]
         "sharpe": 0.2,
         "profit_factor": 1.05,
         "max_drawdown": -0.2,
-        "expectancy": 0.0,
+        "expectancy": 0.001,
+        "expectancy_lcb": 0.0001,
         "net_return": 0.0,
         "rank_score": rank_score,
         "rank": 1,

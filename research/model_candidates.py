@@ -17,6 +17,10 @@ from sklearn.preprocessing import StandardScaler
 
 CLASS_NAMES = ("down", "sideway", "up")
 SIDEWAY_LIMIT = 0.01
+UP_CORRECT = 0.03
+DOWN_CORRECT = -0.03
+UP_PARTIAL_MIN = 0.001
+DOWN_PARTIAL_MAX = -0.001
 
 
 @dataclass(frozen=True)
@@ -182,6 +186,69 @@ class HurdleReturnClassifier(ClassifierMixin, BaseEstimator):
         ]))
 
 
+class ThresholdUtilityClassifier(ClassifierMixin, BaseEstimator):
+    """Estimate the score-rule thresholds directly from the continuous return.
+
+    The dashboard grade is not a plain three-class target: a directional call can
+    earn a partial score before it reaches +/-3%, while SIDEWAY is exact inside
+    +/-1%. Independent cumulative models preserve that information and return
+    normalized expected grading utilities for DOWN, SIDEWAY and UP.
+    """
+
+    def __init__(self, C: float = 0.30, max_iter: int = 1200) -> None:
+        self.C = C
+        self.max_iter = max_iter
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "ThresholdUtilityClassifier":
+        values = np.asarray(X, dtype=float)
+        returns = np.asarray(y, dtype=float)
+        self.classes_ = np.arange(3)
+        self.thresholds_ = np.asarray([
+            DOWN_CORRECT,
+            -SIDEWAY_LIMIT,
+            DOWN_PARTIAL_MAX,
+            UP_PARTIAL_MIN,
+            SIDEWAY_LIMIT,
+            UP_CORRECT,
+        ])
+        self.models_: list[LogisticRegression | None] = []
+        self.priors_: list[float] = []
+        for threshold in self.thresholds_:
+            above = (returns > threshold).astype(int)
+            prior = float((above.sum() + 1) / (len(above) + 2))
+            self.priors_.append(prior)
+            if np.unique(above).size < 2:
+                self.models_.append(None)
+                continue
+            self.models_.append(LogisticRegression(
+                C=self.C,
+                max_iter=self.max_iter,
+            ).fit(values, above))
+        return self
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        values = np.asarray(X, dtype=float)
+        probability_above = np.column_stack([
+            _binary_probability(model, prior, values)
+            for model, prior in zip(self.models_, self.priors_)
+        ])
+        # P(r > threshold) must be non-increasing as the threshold rises.
+        probability_above = np.minimum.accumulate(probability_above, axis=1)
+        down_utility = 0.5 * (
+            (1 - probability_above[:, 0]) + (1 - probability_above[:, 2])
+        )
+        sideway_utility = np.maximum(
+            1e-8,
+            probability_above[:, 1] - probability_above[:, 4],
+        )
+        up_utility = 0.5 * (probability_above[:, 3] + probability_above[:, 5])
+        return _normalise_probabilities(np.column_stack([
+            down_utility,
+            sideway_utility,
+            up_utility,
+        ]))
+
+
 class HMMRegimeClassifier(ClassifierMixin, BaseEstimator):
     """Maps train-only HMM regimes to classes without Viterbi look-ahead on test rows."""
 
@@ -319,6 +386,13 @@ def candidate_model_specs(feature_columns: Sequence[str], random_state: int = 42
             "daily_return",
             "hurdle",
         ),
+        ModelCandidateSpec(
+            "Threshold Utility",
+            linear_pipeline(ThresholdUtilityClassifier()),
+            columns,
+            "daily_return",
+            "threshold-utility",
+        ),
     ]
 
     try:
@@ -433,6 +507,7 @@ def model_availability_rows() -> list[dict[str, object]]:
         {"model": "HistGradientBoosting", "family": "boosting", "available": True, "cadence": "daily"},
         {"model": "Quantile Boosting", "family": "distributional-regression", "available": True, "cadence": "daily"},
         {"model": "Hurdle Return", "family": "hurdle", "available": True, "cadence": "daily"},
+        {"model": "Threshold Utility", "family": "threshold-utility", "available": True, "cadence": "daily"},
         {"model": "XGBoost", "family": "boosting", "available": installed("xgboost"), "cadence": "daily"},
         {"model": "LightGBM", "family": "boosting", "available": installed("lightgbm"), "cadence": "daily"},
         {"model": "CatBoost", "family": "boosting", "available": installed("catboost"), "cadence": "daily"},

@@ -42,7 +42,12 @@ export async function GET() {
   };
 
   try {
-    const artifact = await readArtifact<ResearchArtifact>("hybrid_research.json");
+    let artifact: ResearchArtifact;
+    try {
+      artifact = await readArtifact<ResearchArtifact>("hybrid_research_core.json");
+    } catch {
+      artifact = await readArtifact<ResearchArtifact>("hybrid_research.json");
+    }
     response.artifact.latestClosedUtc = artifact.meta.latest_closed_utc;
     response.artifact.generatedAt = artifact.meta.generated_at;
     response.artifact.marketHealth = artifact.health?.market.status ?? "unknown";

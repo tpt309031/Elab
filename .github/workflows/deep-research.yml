@@ -16,7 +16,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: weekly-deep-challenger-research
+  group: elab-research-writer
   cancel-in-progress: false
 
 jobs:

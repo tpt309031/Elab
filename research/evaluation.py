@@ -424,23 +424,53 @@ def class_drift_rows(frame: pd.DataFrame, recent_days: int = 90, reference_days:
     return pd.DataFrame(rows)
 
 
-def page_hinkley_alarm(values: Sequence[float], delta: float = 0.005, threshold: float = 0.15) -> dict[str, object]:
+def page_hinkley_alarm(
+    values: Sequence[float],
+    delta: float = 0.005,
+    threshold: float = 5.0,
+    recent_window: int = 60,
+) -> dict[str, object]:
     series = np.asarray(list(values), dtype=float)
     series = series[np.isfinite(series)]
     if len(series) < 20:
-        return {"alarm": False, "statistic": math.nan, "observations": int(len(series))}
+        return {
+            "alarm": False,
+            "action": "insufficient-evidence",
+            "statistic": math.nan,
+            "observations": int(len(series)),
+        }
     mean = 0.0
     cumulative = 0.0
     minimum = 0.0
     maximum_statistic = 0.0
+    alarm_indices: list[int] = []
     for index, value in enumerate(series, start=1):
         mean += (value - mean) / index
         cumulative += value - mean - delta
         minimum = min(minimum, cumulative)
         maximum_statistic = max(maximum_statistic, cumulative - minimum)
+        if cumulative - minimum >= threshold:
+            alarm_indices.append(index - 1)
+            cumulative = 0.0
+            minimum = 0.0
+    recent_count = min(recent_window, max(20, len(series) // 5))
+    baseline = series[:-recent_count]
+    recent = series[-recent_count:]
+    baseline_mean = float(np.mean(baseline)) if len(baseline) else float(np.mean(series))
+    recent_mean = float(np.mean(recent))
+    last_alarm_index = alarm_indices[-1] if alarm_indices else None
+    alarm_is_recent = last_alarm_index is not None and last_alarm_index >= len(series) - recent_count
+    deterioration = recent_mean - baseline_mean
+    alarm = bool(alarm_is_recent and deterioration >= 0.05)
     return {
-        "alarm": bool(maximum_statistic >= threshold),
+        "alarm": alarm,
+        "action": "suspend-execution" if alarm else "monitor",
         "statistic": float(maximum_statistic),
         "threshold": threshold,
         "observations": int(len(series)),
+        "last_alarm_index": last_alarm_index,
+        "recent_window": recent_count,
+        "baseline_loss": baseline_mean,
+        "recent_loss": recent_mean,
+        "deterioration": deterioration,
     }

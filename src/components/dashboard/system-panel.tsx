@@ -71,6 +71,9 @@ export function SystemPanel({ data, deep, health }: SystemPanelProps) {
             <p><b className="text-foreground">Stacking:</b> {String(data.meta.validation.stacking ?? "pre-test OOS selection")}</p>
             <p><b className="text-foreground">Promotion:</b> minimum {String(data.meta.validation.minimum_live_grades_for_promotion ?? 20)} immutable live grades; production changes monthly.</p>
             <p><b className="text-foreground">Availability:</b> {data.meta.availability_assumption}</p>
+            <p><b className="text-foreground">Private PIT coverage:</b> {data.meta.provenance ? `${(data.meta.provenance.private_point_in_time_coverage * 100).toFixed(1)}% · ${data.meta.provenance.status}` : "legacy artifact"}</p>
+            {data.meta.provenance?.warnings.map((warning) => <p key={warning} className="border-l border-amber-400 pl-2 text-amber-200/80">{warning}</p>)}
+            <p><b className="text-foreground">Source revisions:</b> {data.learning?.source_revisions?.length ?? 0} retained snapshots · digest {data.meta.provenance?.revision_digest?.slice(0, 12) ?? "—"}</p>
           </CardContent>
         </Card>
       </div>

@@ -24,11 +24,16 @@ async function healthFetcher(url: string): Promise<SystemHealthResponse> {
   return payload;
 }
 
-export function useResearchData() {
-  const research = useSWR<ResearchArtifact>("/data/hybrid_research.json", jsonFetcher, {
+export function useResearchData(loadResearchDetails = false) {
+  const core = useSWR<ResearchArtifact>("/data/hybrid_research_core.json", jsonFetcher, {
     revalidateOnFocus: false,
     dedupingInterval: 60_000,
   });
+  const details = useSWR<ResearchArtifact>(
+    loadResearchDetails ? "/data/hybrid_research.json" : null,
+    jsonFetcher,
+    { revalidateOnFocus: false, dedupingInterval: 300_000 },
+  );
   const live = useSWR<LiveMarketResponse>("/api/market?timeframe=5m", jsonFetcher, {
     refreshInterval: 300_000,
     revalidateOnFocus: true,
@@ -44,5 +49,14 @@ export function useResearchData() {
     revalidateOnFocus: true,
     dedupingInterval: 60_000,
   });
-  return { research, live, deep, health };
+  const research = {
+    ...core,
+    data: details.data ?? core.data,
+    error: core.error,
+    mutate: async () => {
+      const results = await Promise.all([core.mutate(), details.mutate()]);
+      return results[1] ?? results[0];
+    },
+  };
+  return { research, details, live, deep, health };
 }

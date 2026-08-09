@@ -1,0 +1,72 @@
+name: Weekly full walk-forward research
+
+on:
+  schedule:
+    - cron: "40 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: elab-research-writer
+  cancel-in-progress: false
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: research/requirements-*.txt
+
+      - name: Install research dependencies
+        run: |
+          python -m pip install -r research/requirements-core.txt
+          python -m pip install pytest
+
+      - name: Verify research invariants
+        run: python -m pytest tests -q
+
+      - name: Refit complete purged walk-forward research
+        run: python research/run_pipeline.py --no-refresh
+
+      - name: Verify publication contracts
+        run: python research/verify_artifact.py
+
+      - name: Commit weekly OOS research
+        shell: bash
+        run: |
+          git config user.name "elab-research-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/hybrid_research.json data/hybrid_research_core.json data/learning_state.json public/data/hybrid_research.json public/data/hybrid_research_core.json
+          if git diff --cached --quiet; then
+            echo "No weekly OOS changes"
+            exit 0
+          fi
+          git commit -m "Refresh weekly walk-forward research"
+          git push
+
+      - name: Open or update weekly research failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TITLE="[ELAB] Weekly walk-forward research failure"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          ISSUE_NUMBER=$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty')
+          BODY="Weekly OOS refit failed at ${GITHUB_SHA}. Run: ${RUN_URL}. Daily grading continues from the last verified research artifact."
+          if [[ -n "$ISSUE_NUMBER" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi

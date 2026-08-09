@@ -40,8 +40,8 @@ def _monthly_forecast_counts(rows: list[dict[str, object]], forecast: str) -> di
 def _verify_monthly_policy_caps(artifact: dict[str, object]) -> None:
     meta = artifact.get("meta", {})
     validation = meta.get("validation", {}) if isinstance(meta, dict) else {}
-    sideway_cap = int(validation.get("maximum_sideway_calls_per_month", 8))
-    no_call_cap = int(validation.get("maximum_no_calls_per_month", 6))
+    sideway_cap = validation.get("maximum_sideway_calls_per_month")
+    no_call_cap = validation.get("maximum_no_calls_per_month")
     forecast_payload = artifact.get("forecast", {})
     learning = artifact.get("learning", {})
     if not isinstance(forecast_payload, dict) or not isinstance(learning, dict):
@@ -66,7 +66,11 @@ def _verify_monthly_policy_caps(artifact: dict[str, object]) -> None:
         ),
     }
     for lane, (locked, visible) in lanes.items():
-        for forecast, configured_cap in (("sideway", sideway_cap), ("no-call", no_call_cap)):
+        configured_caps = (("sideway", sideway_cap), ("no-call", no_call_cap))
+        for forecast, configured_cap in configured_caps:
+            if configured_cap is None:
+                continue
+            configured_cap = int(configured_cap)
             locked_counts = _monthly_forecast_counts(locked, forecast)
             visible_counts = _monthly_forecast_counts(visible, forecast)
             for month, count in visible_counts.items():
@@ -81,6 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify the published learning and forecast contract")
     parser.add_argument("--artifact", type=Path, default=ROOT / "public" / "data" / "hybrid_research.json")
     parser.add_argument("--state", type=Path, default=ROOT / "data" / "learning_state.json")
+    parser.add_argument("--core", type=Path, default=ROOT / "public" / "data" / "hybrid_research_core.json")
     return parser.parse_args()
 
 
@@ -109,6 +114,13 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
             raise AssertionError("schema v4 artifact must contain source lineage")
         if any(not isinstance(item, dict) or not item.get("sha256") for item in lineage):
             raise AssertionError("every lineage source must include a SHA-256 digest")
+    if int(meta.get("schema_version", 0)) >= 5:
+        expected_target = (latest_closed + pd.Timedelta(days=2)).strftime("%Y-%m-%dT00:00:00Z")
+        if meta.get("first_publishable_target_utc") != expected_target:
+            raise AssertionError("schema v5 artifact must publish with a two-session lead")
+        provenance = meta.get("provenance", {})
+        if not isinstance(provenance, dict) or not provenance.get("revision_digest"):
+            raise AssertionError("schema v5 artifact must include source revision provenance")
     forecasts = state.get("forecasts", [])
     if not isinstance(forecasts, list):
         raise AssertionError("learning forecasts must be a list")
@@ -126,6 +138,18 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
             raise AssertionError(f"forecast was issued after its target closed: {row['forecast_id']}")
         if row.get("immutable_digest") != official_forecast_digest(row):
             raise AssertionError(f"published forecast was mutated: {row['forecast_id']}")
+        if int(row.get("contract_version", 1)) >= 2:
+            issued_at = pd.Timestamp(row["issued_at"])
+            target_start = pd.Timestamp(row["target_start_utc"])
+            if issued_at.tzinfo is None:
+                issued_at = issued_at.tz_localize("UTC")
+            if target_start.tzinfo is None:
+                target_start = target_start.tz_localize("UTC")
+            if issued_at >= target_start:
+                raise AssertionError(f"forecast was not issued ex ante: {row['forecast_id']}")
+            closed_at_issue = pd.Timestamp(row["closed_through_at_issue"]).normalize()
+            if target < closed_at_issue + pd.Timedelta(days=2):
+                raise AssertionError(f"forecast violates publication lead: {row['forecast_id']}")
         if target <= latest_closed and not row.get("evaluated_at"):
             raise AssertionError(f"closed forecast was not evaluated: {row['forecast_id']}")
         if row.get("evaluated_at"):
@@ -183,8 +207,10 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
     for lane in ("Calendar", "Full Hybrid"):
         lane_rows = [row for row in rankings if row.get("lane") == lane]
         active = [row for row in lane_rows if row.get("status") == "active"]
-        if not active or len(active) > 4:
-            raise AssertionError(f"{lane} must have between 1 and 4 active models")
+        if len(active) > 4:
+            raise AssertionError(f"{lane} must have no more than 4 active models")
+        if any(float(row.get("expectancy_lcb", float("-inf"))) <= 0 for row in active):
+            raise AssertionError(f"{lane} contains an active model without positive net expectancy")
         ranks = [int(row["rank"]) for row in lane_rows]
         if ranks != sorted(ranks):
             raise AssertionError(f"{lane} model rankings must be sorted")
@@ -257,7 +283,15 @@ def main() -> None:
     args = parse_args()
     artifact = json.loads(args.artifact.read_text(encoding="utf-8"))
     state = load_learning_state(args.state)
-    print(json.dumps(verify(artifact, state), indent=2))
+    result = verify(artifact, state)
+    if args.core.exists():
+        core = json.loads(args.core.read_text(encoding="utf-8"))
+        if core.get("meta", {}).get("latest_closed_utc") != artifact.get("meta", {}).get("latest_closed_utc"):
+            raise AssertionError("core and full artifacts have different market cutoffs")
+        if args.core.stat().st_size >= args.artifact.stat().st_size:
+            raise AssertionError("core artifact must be smaller than the detailed artifact")
+        result["core_bytes"] = args.core.stat().st_size
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

@@ -53,6 +53,7 @@ def source_lineage(
     first_date: object,
     last_date: object,
     explicit_availability_rows: int = 0,
+    availability_mode: str | None = None,
 ) -> dict[str, object]:
     source = Path(path)
 
@@ -70,7 +71,9 @@ def source_lineage(
         "first_date": date_text(first_date),
         "last_date": date_text(last_date),
         "explicit_availability_rows": int(explicit_availability_rows),
-        "availability_mode": "explicit" if explicit_availability_rows == rows and rows > 0 else "prepublished-imputed",
+        "availability_mode": availability_mode or (
+            "explicit" if explicit_availability_rows == rows and rows > 0 else "prepublished-imputed"
+        ),
     }
 
 

@@ -11,14 +11,27 @@ from research.learning import (
     grade_learning_state,
     load_learning_state,
     record_selection_snapshot,
+    record_source_revision,
     serialize_learning_state,
 )
+
+
+def test_source_revision_history_is_append_only_and_content_addressed() -> None:
+    state = empty_learning_state()
+    first = [{"source": "private-index-btc", "sha256": "a", "rows": 10, "last_date": "2026-01-01"}]
+    second = [{"source": "private-index-btc", "sha256": "b", "rows": 11, "last_date": "2026-01-02"}]
+
+    assert record_source_revision(state, first, "2026-01-02T00:00:00Z")
+    assert not record_source_revision(state, first, "2026-01-02T01:00:00Z")
+    assert record_source_revision(state, second, "2026-01-03T00:00:00Z")
+    assert len(state["source_revisions"]) == 2
+    assert state["source_revisions"][-1]["changed_sources"] == ["private-index-btc"]
 
 
 def test_official_forecast_is_idempotent_and_immutable() -> None:
     state = empty_learning_state()
     forecast = {
-        "date": "2026-07-12",
+        "date": "2026-07-13",
         "forecast": "up",
         "prob_down": 0.2,
         "prob_sideway": 0.3,
@@ -32,6 +45,19 @@ def test_official_forecast_is_idempotent_and_immutable() -> None:
     assert len(state["forecasts"]) == 1
     assert state["forecasts"][0]["forecast"] == "up"
     assert state["forecasts"][0]["issued_at"] == "2026-07-12T03:20:00Z"
+    assert state["forecasts"][0]["contract_version"] == 2
+
+
+def test_official_forecast_rejects_a_target_that_has_already_opened() -> None:
+    state = empty_learning_state()
+    with pytest.raises(ValueError, match="issued before target opens"):
+        append_official_forecast(
+            state,
+            {"date": "2026-07-12", "forecast": "up"},
+            "Calendar",
+            "2026-07-12T03:20:00Z",
+            "2026-07-11",
+        )
 
 
 def test_only_closed_sessions_are_graded_with_model_and_pattern_provenance() -> None:
@@ -51,16 +77,16 @@ def test_only_closed_sessions_are_graded_with_model_and_pattern_provenance() -> 
         state,
         {**base, "date": "2026-07-10"},
         "Full Hybrid",
-        "2026-07-10T03:20:00Z",
-        "2026-07-09",
+        "2026-07-09T03:20:00Z",
+        "2026-07-08",
         [{"model": "Logistic", "next_forecast": "down", "status": "active"}],
     )
     append_official_forecast(
         state,
         {**base, "date": "2026-07-12"},
         "Full Hybrid",
-        "2026-07-12T03:20:00Z",
-        "2026-07-11",
+        "2026-07-11T03:20:00Z",
+        "2026-07-10",
         [],
     )
     market = pd.DataFrame({
@@ -105,6 +131,20 @@ def test_live_results_promote_better_model_without_erasing_oos_prior() -> None:
     assert ranked.iloc[0]["status"] == "active"
     assert ranked.iloc[0]["live_samples"] == 10
     assert ranked.iloc[0]["adjusted_weighted_accuracy"] > ranked.iloc[1]["adjusted_weighted_accuracy"]
+
+
+def test_model_with_non_positive_expectancy_lower_bound_cannot_trade() -> None:
+    metric = _model_metric("Optimistic model")
+    metric["expectancy_lcb"] = -0.0001
+    ranked = apply_live_model_ranking(
+        pd.DataFrame([metric]),
+        empty_learning_state(),
+        "Calendar",
+    )
+
+    assert ranked.iloc[0]["status"] == "standby"
+    assert not bool(ranked.iloc[0]["trade_eligible"])
+    assert "expectancy lower bound" in ranked.iloc[0]["replacement_reason"]
 
 
 def test_live_pattern_results_control_active_registry_and_snapshot_is_daily() -> None:
@@ -157,7 +197,7 @@ def test_live_pattern_results_control_active_registry_and_snapshot_is_daily() ->
 def test_published_digest_detects_mutation_and_corrupt_state_fails_closed(tmp_path) -> None:
     state = empty_learning_state()
     forecast = {
-        "date": "2026-07-12",
+        "date": "2026-07-13",
         "forecast": "up",
         "prob_down": 0.2,
         "prob_sideway": 0.3,
@@ -194,6 +234,7 @@ def _model_metric(model: str) -> dict[str, float | int | str]:
         "profit_factor": 1.1,
         "max_drawdown": -0.2,
         "expectancy": 0.001,
+        "expectancy_lcb": 0.0001,
         "net_return": 0.1,
         "rank_score": 0.5,
         "rank": 1,

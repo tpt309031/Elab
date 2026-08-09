@@ -6,6 +6,7 @@ from research.model_candidates import (
     HurdleReturnClassifier,
     OrdinalLogisticClassifier,
     QuantileReturnClassifier,
+    ThresholdUtilityClassifier,
     candidate_model_specs,
     learn_simplex_weights,
     model_availability_rows,
@@ -28,10 +29,12 @@ def test_custom_estimators_emit_three_class_probabilities() -> None:
     ordinal = OrdinalLogisticClassifier(max_iter=300).fit(values, labels)
     hurdle = HurdleReturnClassifier(max_iter=300).fit(values, returns)
     quantile = QuantileReturnClassifier(max_iter=12, min_samples_leaf=8).fit(values, returns)
+    threshold = ThresholdUtilityClassifier(max_iter=300).fit(values, returns)
 
     _assert_probabilities(ordinal.predict_proba(values[:13]), 13)
     _assert_probabilities(hurdle.predict_proba(values[:13]), 13)
     _assert_probabilities(quantile.predict_proba(values[:13]), 13)
+    _assert_probabilities(threshold.predict_proba(values[:13]), 13)
 
 
 def test_simplex_stacking_is_nonnegative_and_prefers_better_oos_member() -> None:
@@ -59,7 +62,8 @@ def test_candidate_registry_keeps_optional_models_explicit() -> None:
 
     required = {
         "Logistic", "Ordinal Logistic", "Random Forest", "HistGradientBoosting",
-        "Quantile Boosting", "Hurdle Return", "XGBoost", "LightGBM", "CatBoost", "HMM Regime",
+        "Quantile Boosting", "Hurdle Return", "Threshold Utility", "XGBoost", "LightGBM",
+        "CatBoost", "HMM Regime",
     }
     assert required == set(status)
     for name in required:

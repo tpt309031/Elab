@@ -40,9 +40,10 @@ export function MarketChart({ market, indices, forecasts }: MarketChartProps) {
     const container = containerRef.current;
     const tooltip = tooltipRef.current;
     if (!container || !tooltip || market.length === 0) return;
+    const compact = container.clientWidth < 640;
     const chart = createChart(container, {
       autoSize: true,
-      height: 620,
+      height: compact ? 480 : 620,
       layout: {
         background: { type: ColorType.Solid, color: "#101010" },
         textColor: "#9a9a9a",
@@ -100,9 +101,20 @@ export function MarketChart({ market, indices, forecasts }: MarketChartProps) {
     btcIndex.setData(btcIndexData);
     traderIndex.setData(traderIndexData);
     const marketDates = new Set(market.map((row) => row.timestamp.slice(0, 10)));
-    const markerData: SeriesMarker<Time>[] = forecasts
+    const markerLimit = compact
+      ? Math.min(5, Math.max(3, Math.ceil(marketDates.size / 21)))
+      : Math.min(12, Math.max(4, Math.ceil(marketDates.size / 10)));
+    const markerCandidates = forecasts
       .map((row) => ({ row, confidence: row.confidence ?? Math.max(row.prob_down, row.prob_sideway, row.prob_up) }))
-      .filter(({ row, confidence }) => row.forecast !== "no-call" && marketDates.has(row.date) && (confidence >= 0.46 || Boolean(row.top_pattern)))
+      .filter(({ row }) => row.forecast !== "no-call" && marketDates.has(row.date))
+      .sort((left, right) => (
+        Number(right.row.trade_eligible) - Number(left.row.trade_eligible)
+        || right.confidence - left.confidence
+        || (right.row.top_pattern?.weighted_accuracy ?? 0) - (left.row.top_pattern?.weighted_accuracy ?? 0)
+      ))
+      .slice(0, markerLimit)
+      .sort((left, right) => left.row.date.localeCompare(right.row.date));
+    const markerData: SeriesMarker<Time>[] = markerCandidates
       .map(({ row, confidence }) => ({
         time: row.date as Time,
         position: row.forecast === "up" ? "belowBar" : row.forecast === "down" ? "aboveBar" : "inBar",
@@ -112,8 +124,8 @@ export function MarketChart({ market, indices, forecasts }: MarketChartProps) {
       }));
     createSeriesMarkers(candles, markerData);
     const panes = chart.panes();
-    panes[0]?.setHeight(410);
-    panes[1]?.setHeight(210);
+    panes[0]?.setHeight(compact ? 310 : 410);
+    panes[1]?.setHeight(compact ? 170 : 210);
     chart.timeScale().fitContent();
 
     chart.subscribeCrosshairMove((parameter) => {
@@ -130,7 +142,12 @@ export function MarketChart({ market, indices, forecasts }: MarketChartProps) {
       const move = (candle.close / candle.open - 1) * 100;
       tooltip.textContent = `${date}  O ${candle.open.toFixed(0)}  H ${candle.high.toFixed(0)}  L ${candle.low.toFixed(0)}  C ${candle.close.toFixed(0)}  ${move >= 0 ? "+" : ""}${move.toFixed(2)}%  BTC-I ${indexRow?.index_BTC ?? "—"}  ME-I ${indexRow?.index_me ?? "—"}`;
     });
-    const observer = new ResizeObserver(() => chart.applyOptions({ width: container.clientWidth }));
+    const observer = new ResizeObserver(() => {
+      const mobile = container.clientWidth < 640;
+      chart.applyOptions({ width: container.clientWidth, height: mobile ? 480 : 620 });
+      chart.panes()[0]?.setHeight(mobile ? 310 : 410);
+      chart.panes()[1]?.setHeight(mobile ? 170 : 210);
+    });
     observer.observe(container);
     return () => {
       observer.disconnect();
@@ -139,8 +156,8 @@ export function MarketChart({ market, indices, forecasts }: MarketChartProps) {
   }, [forecasts, indexByDate, indices, market]);
 
   return (
-    <div className="relative min-h-[620px] w-full overflow-hidden border border-border bg-card">
-      <div ref={containerRef} className="h-[620px] w-full" aria-label="BTC candlestick chart with private indices" />
+    <div className="relative min-h-[480px] w-full overflow-hidden border border-border bg-card sm:min-h-[620px]">
+      <div ref={containerRef} className="h-[480px] w-full sm:h-[620px]" aria-label="BTC candlestick chart with private indices" />
       <div
         ref={tooltipRef}
         className="pointer-events-none absolute z-20 max-w-56 border border-[#464646] bg-[#111]/95 px-3 py-2 font-mono text-[10px] leading-5 text-[#f5f5f5] opacity-0 shadow-2xl transition-opacity"
@@ -148,7 +165,7 @@ export function MarketChart({ market, indices, forecasts }: MarketChartProps) {
       <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap gap-2 text-[10px]">
         <span className="border border-border bg-black/70 px-2 py-1 text-muted-foreground"><i className="mr-1 inline-block size-2 bg-primary" />BTC Psychology</span>
         <span className="border border-border bg-black/70 px-2 py-1 text-muted-foreground"><i className="mr-1 inline-block size-2 bg-[#4f9dff]" />Trader Energy</span>
-        <span className="border border-border bg-black/70 px-2 py-1 text-muted-foreground">Calls ≥46% or active pattern</span>
+        <span className="border border-border bg-black/70 px-2 py-1 text-muted-foreground">Highest-confidence calls in view</span>
       </div>
     </div>
   );
