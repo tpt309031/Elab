@@ -83,7 +83,7 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
           </Select>
         </div>
       </div>
-      {lane === "full" && <p className="border-l-2 border-primary bg-primary/5 px-3 py-2 text-xs text-muted-foreground">The first publishable UTC session uses Full Hybrid. Later dates are Index + Astro outlooks because future market bars do not exist yet. Every row remains a forecast; only rows marked TRADE pass the after-cost execution gate.</p>}
+      {lane === "full" && <p className="border-l-2 border-primary bg-primary/5 px-3 py-2 text-xs text-muted-foreground">The first publishable UTC session uses Full Hybrid. Later dates are Index + Astro outlooks because future market bars do not exist yet. Monthly policy allows at most 8 SIDEWAY calls and 4 NO CALL sessions; only rows marked TRADE pass the after-cost execution gate.</p>}
       <AccuracyBar rows={laneRows} />
       <ForecastCalendar month={month} rows={filtered} selectedDate={selected?.date} onMonthChange={setMonth} onSelect={setSelected} />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">

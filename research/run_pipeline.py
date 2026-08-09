@@ -223,6 +223,13 @@ def _restore_backtest(payload: dict[str, object], lane: str) -> object | None:
     """Hydrate the immutable weekly OOS result for a fast daily publication run."""
     from research.hybrid_core import BacktestResult
 
+    meta = payload.get("meta", {})
+    validation = meta.get("validation", {}) if isinstance(meta, dict) else {}
+    if not isinstance(validation, dict) or (
+        validation.get("maximum_sideway_calls_per_month") != MAX_SIDEWAY_PER_MONTH
+        or validation.get("maximum_no_calls_per_month") != MAX_NO_CALL_PER_MONTH
+    ):
+        return None
     forecast_payload = payload.get("forecast", {})
     performance = payload.get("performance", {})
     patterns = payload.get("patterns", {})
@@ -501,6 +508,7 @@ def main() -> None:
         max_future_days=1,
         policy_history=full.forecasts,
         capacity_histories=[full_capacity],
+        reserved_histories=[full_capacity],
         preferred_models=full_preferred,
         pattern_adjuster=lambda registry: apply_live_pattern_ranking(
             registry, learning_state, "Full Hybrid", as_of_closed=latest_closed,

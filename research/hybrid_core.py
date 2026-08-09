@@ -34,10 +34,10 @@ OOS_START = pd.Timestamp("2024-01-01")
 UP_CORRECT = 0.03
 DOWN_CORRECT = -0.03
 SIDEWAY_LIMIT = 0.01
-# Forecasts are produced every day from model probabilities. Capacity limits now
-# belong to the execution gate, not to the statistical forecast itself.
-MAX_SIDEWAY_PER_MONTH: int | None = None
-MAX_NO_CALL_PER_MONTH = 0
+# Monthly diversity constraints are applied ex ante to both walk-forward and
+# future forecasts. They limit class concentration without changing outcomes.
+MAX_SIDEWAY_PER_MONTH = 8
+MAX_NO_CALL_PER_MONTH = 4
 UP_PARTIAL_MIN = 0.001
 DOWN_PARTIAL_MAX = -0.001
 TRADING_COST = 0.0005
@@ -850,8 +850,11 @@ def allocate_monthly_directions(
     max_sideway_per_month: int | None = MAX_SIDEWAY_PER_MONTH,
     existing_sideway_per_month: Mapping[str, int] | None = None,
     excluded_dates: Iterable[object] | None = None,
+    allow_no_call: bool = False,
+    max_no_call_per_month: int = MAX_NO_CALL_PER_MONTH,
+    existing_no_call_per_month: Mapping[str, int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Apply the score policy, with an optional legacy SIDEWAY capacity."""
+    """Apply score policy and ex-ante monthly SIDEWAY/NO CALL capacities."""
     probabilities = np.asarray(probabilities, dtype=float)
     if probabilities.ndim != 2 or probabilities.shape[1] != len(CLASS_NAMES):
         raise ValueError("probabilities must have shape (n_rows, 3)")
@@ -866,6 +869,10 @@ def allocate_monthly_directions(
     date_keys = pd.to_datetime(pd.Series(list(dates))).dt.strftime("%Y-%m-%d").to_numpy()
     sideway_index = CLASS_TO_INDEX["sideway"]
     existing = {str(key): max(0, int(value)) for key, value in (existing_sideway_per_month or {}).items()}
+    existing_no_call = {
+        str(key): max(0, int(value))
+        for key, value in (existing_no_call_per_month or {}).items()
+    }
     excluded = {
         pd.Timestamp(value).strftime("%Y-%m-%d")
         for value in (excluded_dates or [])
@@ -898,6 +905,32 @@ def allocate_monthly_directions(
         alternatives = np.delete(utilities[row_index], direction_index)
         margins[row_index] = expected_scores[row_index] - float(np.max(alternatives))
     directions = np.asarray(CLASS_NAMES, dtype=object)[selected]
+    if allow_no_call and max_no_call_per_month > 0:
+        selected_confidence = probabilities[np.arange(len(selected)), selected]
+        utility_order = np.sort(utilities, axis=1)
+        utility_margin = utility_order[:, -1] - utility_order[:, -2]
+        uncertain = overridden | (selected_confidence < 0.42) | (utility_margin < 0.025)
+        uncertainty_score = (
+            (1.0 - selected_confidence)
+            + np.clip(0.025 - utility_margin, 0.0, None) * 4.0
+            + overridden.astype(float)
+        )
+        for month_key in pd.unique(month_keys):
+            available = max(0, max_no_call_per_month - existing_no_call.get(str(month_key), 0))
+            if available == 0:
+                continue
+            candidates = np.flatnonzero(
+                (month_keys == month_key)
+                & uncertain
+                & ~np.isin(date_keys, list(excluded))
+            )
+            if not len(candidates):
+                continue
+            order = np.argsort(-uncertainty_score[candidates], kind="stable")
+            abstained = candidates[order[:available]]
+            directions[abstained] = "no-call"
+            expected_scores[abstained] = np.nan
+            margins[abstained] = np.nan
     return directions, expected_scores, margins, overridden
 
 
@@ -1242,12 +1275,13 @@ def _decision_rows(
     policy_mode: str = "reward",
     sideway_penalty: float = 1.0,
 ) -> list[dict[str, object]]:
-    # Kept in the signature for artifact compatibility. Forecast coverage is now
-    # always 100%; abstention happens later as TRADE/FLAT, never as NO CALL.
-    del dynamic_no_call, volatility
+    # Volatility remains available for future policy extensions; uncertainty is
+    # currently measured only from ex-ante calibrated class probabilities.
+    del volatility
     records: list[dict[str, object]] = []
     directions, expected_scores, margins, sideway_overrides = allocate_monthly_directions(
         dates, probabilities, matrix, policy_mode, sideway_penalty,
+        allow_no_call=dynamic_no_call,
     )
     for index, (date, probability, daily_return) in enumerate(zip(dates, probabilities, returns)):
         direction = str(directions[index])
@@ -1973,12 +2007,16 @@ def fit_latest_forecasts(
     pattern_context_start = pd.Timestamp(future["date"].min()) - pd.Timedelta(days=3)
     pattern_context = frame[frame["date"].between(pattern_context_start, future["date"].max())]
     matching_pattern_sets = _matching_pattern_sets(future, final_registry, pattern_context)
-    # Capacity histories remain accepted for backward-compatible callers, but
-    # statistical forecasts are no longer altered to satisfy monthly quotas.
-    del capacity_histories, reserved_histories
+    existing_sideway = maximum_monthly_forecast_counts(capacity_histories, "sideway")
+    existing_no_call = maximum_monthly_forecast_counts(capacity_histories, "no-call")
+    excluded_dates = reserved_forecast_dates(reserved_histories)
     forecast_rows: list[dict[str, object]] = []
     directions, expected_scores, margins, sideway_overrides = allocate_monthly_directions(
         future["date"], ensemble, matrix, policy_mode, sideway_penalty,
+        existing_sideway_per_month=existing_sideway,
+        excluded_dates=excluded_dates,
+        allow_no_call=True,
+        existing_no_call_per_month=existing_no_call,
     )
     information_cutoff = (latest_market_date + pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
     for row_index, (_, row) in enumerate(future.iterrows()):
@@ -1994,7 +2032,11 @@ def fit_latest_forecasts(
             "lane": lane,
             "forecast": direction,
             "status": "pending",
-            "confidence": float(probability[CLASS_TO_INDEX[direction]]),
+            "confidence": float(
+                probability[CLASS_TO_INDEX[direction]]
+                if direction in CLASS_TO_INDEX
+                else np.max(probability)
+            ),
             "prob_down": float(probability[0]),
             "prob_sideway": float(probability[1]),
             "prob_up": float(probability[2]),

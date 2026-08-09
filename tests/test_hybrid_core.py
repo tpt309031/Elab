@@ -91,14 +91,49 @@ def test_market_features_respect_two_session_publication_lead() -> None:
     assert np.isclose(observed, expected)
 
 
-def test_forecast_policy_does_not_force_a_monthly_sideway_quota() -> None:
+def test_forecast_policy_caps_sideway_at_eight_per_month() -> None:
     dates = pd.date_range("2026-01-01", periods=40, freq="D")
     probabilities = np.tile(np.array([0.20, 0.60, 0.20]), (len(dates), 1))
     directions, _, _, overrides = allocate_monthly_directions(
         dates, probabilities, np.eye(3), policy_mode="probability",
     )
-    assert all(direction == "sideway" for direction in directions)
-    assert not overrides.any()
+    monthly = pd.DataFrame({"date": dates, "forecast": directions})
+    monthly["month"] = monthly["date"].dt.strftime("%Y-%m")
+    counts = monthly.groupby("month")["forecast"].apply(lambda values: (values == "sideway").sum())
+    assert counts.max() == 8
+    assert overrides.sum() == 24
+
+
+def test_dynamic_no_call_is_limited_to_four_uncertain_days_per_month() -> None:
+    dates = pd.date_range("2026-01-01", periods=31, freq="D")
+    probabilities = np.tile(np.array([0.20, 0.60, 0.20]), (len(dates), 1))
+    directions, expected_scores, margins, _ = allocate_monthly_directions(
+        dates,
+        probabilities,
+        np.eye(3),
+        policy_mode="probability",
+        allow_no_call=True,
+    )
+    assert (directions == "sideway").sum() == 8
+    assert (directions == "no-call").sum() == 4
+    assert np.isnan(expected_scores[directions == "no-call"]).all()
+    assert np.isnan(margins[directions == "no-call"]).all()
+
+
+def test_no_call_capacity_respects_locked_forecasts() -> None:
+    dates = pd.date_range("2026-07-13", periods=6, freq="D")
+    probabilities = np.tile(np.array([0.34, 0.33, 0.33]), (len(dates), 1))
+    directions, _, _, _ = allocate_monthly_directions(
+        dates,
+        probabilities,
+        np.eye(3),
+        policy_mode="probability",
+        allow_no_call=True,
+        existing_no_call_per_month={"2026-07": 3},
+        excluded_dates={"2026-07-13"},
+    )
+    assert directions[0] != "no-call"
+    assert (directions == "no-call").sum() == 1
 
 
 def test_future_sideway_capacity_respects_locked_monthly_calls() -> None:
