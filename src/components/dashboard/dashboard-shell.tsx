@@ -37,7 +37,7 @@ const navigation = [
   { value: "backtest", label: "Backtest", icon: BarChart3 },
   { value: "models", label: "Models", icon: BrainCircuit },
   { value: "diagnostics", label: "Diagnostics", icon: SlidersHorizontal },
-  { value: "events", label: "Event Lab", icon: Radar },
+  { value: "events", label: "Volume & Event Lab", icon: Radar },
   { value: "system", label: "System", icon: ShieldCheck },
 ] as const;
 
@@ -66,7 +66,7 @@ export function DashboardShell() {
   const [showForecasts, setShowForecasts] = useState(true);
   const [showIndices, setShowIndices] = useState(true);
   const loadResearchDetails = section !== "decision";
-  const { research, live, deep, health } = useResearchData(loadResearchDetails);
+  const { research, details, live, deep, health } = useResearchData(loadResearchDetails);
   const data = research.data;
   const latestClosed = data?.meta.latest_closed_utc ?? new Date().toISOString().slice(0, 10);
   const [defaultYear, defaultMonth] = latestClosed.slice(0, 7).split("-");
@@ -134,11 +134,13 @@ export function DashboardShell() {
     { label: "DOWN", value: nextFull?.prob_down ?? 1 / 3, className: "[&>div]:bg-red-400" },
   ];
   const activeSection = navigation.find((item) => item.value === section)?.label ?? "Decision";
+  const liveGraded = (data.learning?.official_forecast_ledger ?? []).filter((row) => row.lane === "Full Hybrid" && (row.contract_version ?? 1) >= 2 && ["correct", "partial", "wrong"].includes(row.status));
+  const liveExact = liveGraded.filter((row) => row.status === "correct").length;
   const heroMetrics = [
     { label: "BTC live", value: formatUsd(latestMarket?.close), detail: `${live.data?.provider ?? data.meta.market_provider} · ${live.data ? "5-minute refresh" : "closed daily"}`, tone: (liveMove ?? 0) >= 0 ? "positive" as const : "negative" as const },
     { label: "Current move", value: formatSignedPercent(liveMove), detail: "versus latest closed UTC candle", tone: (liveMove ?? 0) >= 0 ? "positive" as const : "negative" as const },
-    { label: "Top OOS model", value: formatPercent(topOosModel?.directional_accuracy), detail: `${topOosModel?.model ?? "Awaiting model"} · ${activeModel ? "trade eligible" : "standby"}`, tone: activeModel ? "positive" as const : "warning" as const },
-    { label: "System target", value: formatPercent(data.meta.target_directional_accuracy), detail: `current best ${formatPercent(data.meta.achieved_directional_accuracy)}`, tone: data.meta.target_reached ? "positive" as const : "warning" as const },
+    { label: "Top-ranked OOS", value: formatPercent(topOosModel?.directional_accuracy), detail: `${topOosModel?.model ?? "Awaiting model"} · directional accuracy`, tone: activeModel ? "positive" as const : "warning" as const },
+    { label: "Live exact accuracy", value: formatPercent(liveGraded.length ? liveExact / liveGraded.length : null), detail: `${liveExact} correct / ${liveGraded.length} published Full Hybrid calls` },
     { label: "Next session", value: (nextFull?.forecast ?? "no-call").toUpperCase(), detail: nextFull ? `${formatDate(nextFull.date)} · ${nextFull.trade_eligible ? `TRADE ${nextFull.trade_action?.toUpperCase()}` : "FLAT"}` : "awaiting research refresh" },
   ];
   return (
@@ -146,14 +148,14 @@ export function DashboardShell() {
       <HeroOdyssey
         eyebrow="ELAB / HYBRID QUANT RESEARCH"
         title="BTC Decision Console"
-        description="Private energy indices, Astro timing, technical patterns and calibrated machine learning. Every production claim is measured on purged walk-forward data."
+        description="Private indices, Astro timing, exchange volume and calibrated machine learning. Historical walk-forward evidence and published live results are tracked separately."
         sectionLabel={activeSection}
         live={Boolean(live.data)}
         liveLabel={live.data ? `${live.data.provider} · 5 MIN` : "STATIC DAILY"}
         latestClosed={data.meta.latest_closed_utc}
         forecast={(nextFull?.forecast ?? "no-call").toUpperCase()}
         forecastDate={nextFull ? formatDate(nextFull.date) : undefined}
-        forecastConfidence={nextFull?.expected_score}
+        forecastConfidence={nextFull?.forecast === "no-call" ? null : nextFull?.confidence}
         metrics={heroMetrics}
         nodes={[
           { label: "Model", value: topOosModel?.model ?? "Awaiting selection" },
@@ -173,9 +175,14 @@ export function DashboardShell() {
         forecast={nextFull}
         meta={data.meta}
         marketStale={Boolean(health.data?.artifact.stale || data.health?.market.stale)}
+        researchStale={Boolean(health.data?.research?.stale)}
+        gradingOverdue={Boolean(health.data?.research?.overdueDailyGrades || health.data?.research?.overdueEventGrades)}
       />
 
       <Tabs value={section} onValueChange={setSection}>
+        {health.data?.research?.stale && <div role="alert" className="mb-4 border border-amber-500/30 p-3 text-xs text-amber-200">Walk-forward research is overdue: last test date {health.data.research.oosEnd}. Check the weekly pipeline before treating rankings as current.</div>}
+        {loadResearchDetails && details.isLoading && <div role="status" className="mb-4 animate-pulse border border-border p-3 text-xs text-muted-foreground">Loading complete historical evidence. Initial figures may be incomplete until the detailed artifact arrives.</div>}
+        {loadResearchDetails && details.error && <div role="alert" className="mb-4 border border-red-500/30 p-3 text-xs text-red-200">Detailed research could not load. <button className="underline" onClick={() => details.mutate()}>Retry full history</button></div>}
         {(health.data?.status === "unhealthy" || data.health?.market.stale) && <div className="mb-4 flex gap-2 border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-100"><AlertTriangle className="size-4 shrink-0 text-red-400" /><span>Research freshness check failed. Forecasts remain visible for audit, but no stale artifact should be treated as a new decision.</span></div>}
 
         <TabsContent value="decision" className="space-y-4">
@@ -189,7 +196,7 @@ export function DashboardShell() {
             </div>
           </div>
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <MarketChart market={chartWindow.market} indices={chartWindow.indices} forecasts={chartWindow.forecasts} />
+            <MarketChart market={chartWindow.market} indices={chartWindow.indices} forecasts={chartWindow.forecasts} volume={data.market_activity?.history} />
             <aside className="space-y-4">
               <Card className="panel-grid"><CardHeader><CardTitle className="flex items-center justify-between text-sm"><span className="flex items-center gap-2"><Target className="size-4 text-primary" />Probability stack</span><Badge variant="outline">{nextFull?.lane ?? "Full Hybrid"}</Badge></CardTitle></CardHeader><CardContent><ProbabilityGauge forecast={nextFull} /><div className="space-y-3">{probabilities.map((item) => <div key={item.label}><div className="mb-1 flex justify-between font-mono text-[10px]"><span>{item.label}</span><span>{formatPercent(item.value)}</span></div><Progress value={item.value * 100} className={item.className} /></div>)}</div></CardContent></Card>
               <Card><CardHeader><CardTitle className="text-sm">Decision context</CardTitle></CardHeader><CardContent className="space-y-3 text-xs text-muted-foreground"><p><b className="text-foreground">Session:</b> {nextFull ? formatDate(nextFull.date) : "—"}</p><p><b className="text-foreground">Policy:</b> {nextFull?.policy_mode ?? "calibrated utility"} · SIDEWAY weight {nextFull?.sideway_penalty?.toFixed(2) ?? "—"}</p><p><b className="text-foreground">Execution:</b> {nextFull?.trade_eligible ? `TRADE ${nextFull.trade_action?.toUpperCase()}` : "FLAT"} · lower-bound edge {formatSignedPercent(nextFull?.expectancy_lcb)}</p><p><b className="text-foreground">Members:</b> {nextFull?.model_members?.join(", ") ?? "awaiting selection"}</p><p><b className="text-foreground">Pattern:</b> {nextFull?.top_pattern?.name ?? "No active pattern match"}</p><p><b className="text-foreground">Timing:</b> information through {nextFull?.information_cutoff_utc?.slice(0, 10) ?? data.meta.latest_closed_utc}; target opens {nextFull?.target_start_utc?.slice(0, 10) ?? "—"} UTC.</p></CardContent></Card>

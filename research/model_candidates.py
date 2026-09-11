@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -16,6 +17,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 CLASS_NAMES = ("down", "sideway", "up")
+RESEARCH_WORKERS = max(1, min(4, int(os.environ.get("ELAB_RESEARCH_WORKERS", "2"))))
 SIDEWAY_LIMIT = 0.01
 UP_CORRECT = 0.03
 DOWN_CORRECT = -0.03
@@ -351,7 +353,7 @@ def candidate_model_specs(feature_columns: Sequence[str], random_state: int = 42
                 min_samples_leaf=10,
                 max_features=0.65,
                 class_weight="balanced_subsample",
-                n_jobs=-1,
+                n_jobs=RESEARCH_WORKERS,
                 random_state=random_state,
             )),
             columns,
@@ -411,7 +413,7 @@ def candidate_model_specs(feature_columns: Sequence[str], random_state: int = 42
                 reg_lambda=2.0,
                 objective="multi:softprob",
                 eval_metric="mlogloss",
-                n_jobs=-1,
+                n_jobs=RESEARCH_WORKERS,
                 random_state=random_state,
             )),
             columns,
@@ -436,7 +438,7 @@ def candidate_model_specs(feature_columns: Sequence[str], random_state: int = 42
                 reg_alpha=0.2,
                 reg_lambda=2.0,
                 verbosity=-1,
-                n_jobs=-1,
+                n_jobs=RESEARCH_WORKERS,
                 random_state=random_state,
             )),
             columns,
@@ -460,7 +462,7 @@ def candidate_model_specs(feature_columns: Sequence[str], random_state: int = 42
                 random_seed=random_state,
                 verbose=False,
                 allow_writing_files=False,
-                thread_count=-1,
+                thread_count=RESEARCH_WORKERS,
             )),
             columns,
             "target",

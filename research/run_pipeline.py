@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from threadpoolctl import threadpool_limits
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -18,6 +19,7 @@ from research.hybrid_core import (
     MAX_SIDEWAY_PER_MONTH,
     OOS_START,
     ROUND_TRIP_COST,
+    RESEARCH_PROTOCOL,
     build_feature_frame,
     equity_curve,
     feature_heatmap,
@@ -58,6 +60,9 @@ from research.learning import (
     serialize_learning_state,
 )
 from research.model_candidates import model_availability_rows
+from research.volume import refresh_volume, volume_features
+from research.large_moves import build_large_move_research
+from research.checkpoints import checkpointed_walk_forward
 
 
 def parse_args() -> argparse.Namespace:
@@ -115,6 +120,15 @@ def _capacity_history(
     combined = pd.concat([base, official], ignore_index=True)
     if combined.empty:
         return combined
+    combined["date"] = pd.to_datetime(combined["date"]).dt.normalize()
+    return combined.drop_duplicates("date", keep="last").sort_values("date").reset_index(drop=True)
+
+
+def _reserve_next_session(locked: pd.DataFrame, proposed: pd.DataFrame) -> pd.DataFrame:
+    """A recomputed next-session call cannot replace immutable quota reservations."""
+    if proposed.empty:
+        return locked.copy()
+    combined = pd.concat([proposed[["date", "forecast"]], locked], ignore_index=True)
     combined["date"] = pd.to_datetime(combined["date"]).dt.normalize()
     return combined.drop_duplicates("date", keep="last").sort_values("date").reset_index(drop=True)
 
@@ -183,6 +197,12 @@ def _core_payload(payload: dict[str, object]) -> dict[str, object]:
     learning["selection_history"] = list(learning.get("selection_history", []))[-7:]
     learning["source_revisions"] = list(learning.get("source_revisions", []))[-20:]
     core["learning"] = learning
+    activity = dict(payload.get("market_activity", {}))
+    activity["history"] = [row for row in activity.get("history", []) if row.get("date", "") >= "2024-01-01"]
+    core["market_activity"] = activity
+    events = dict(payload.get("large_moves", {}))
+    events["historical"] = []
+    core["large_moves"] = events
     return core
 
 
@@ -228,6 +248,7 @@ def _restore_backtest(payload: dict[str, object], lane: str) -> object | None:
     if not isinstance(validation, dict) or (
         validation.get("maximum_sideway_calls_per_month") != MAX_SIDEWAY_PER_MONTH
         or validation.get("maximum_no_calls_per_month") != MAX_NO_CALL_PER_MONTH
+        or validation.get("protocol") != RESEARCH_PROTOCOL
     ):
         return None
     forecast_payload = payload.get("forecast", {})
@@ -344,7 +365,8 @@ def _apply_trade_gate(
     for index, row in output.iterrows():
         direction = str(row.get("forecast"))
         direction_agrees = champion_direction == direction
-        executable = champion is not None and direction in {"up", "down"} and direction_agrees
+        next_session = row["date"] == output["date"].min()
+        executable = champion is not None and direction in {"up", "down"} and direction_agrees and next_session
         output.at[index, "trade_action"] = direction if executable else "flat"
         output.at[index, "trade_eligible"] = bool(executable)
         output.at[index, "execution_model"] = champion_name
@@ -355,7 +377,9 @@ def _apply_trade_gate(
         output.at[index, "expectancy_lcb"] = (
             float(champion["expectancy_lcb"]) if executable else np.nan
         )
-        if champion is None:
+        if not next_session:
+            reason = "FLAT: long-range outlook; requires a fresh date-specific execution decision"
+        elif champion is None:
             reason = "FLAT: no candidate has a positive out-of-sample net-expectancy lower bound"
         elif direction == "sideway":
             reason = "FLAT: SIDEWAY is an outlook class, not a directional trade"
@@ -367,6 +391,7 @@ def _apply_trade_gate(
     return output
 
 
+@threadpool_limits.wrap(limits=2)
 def main() -> None:
     args = parse_args()
     run_at = utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -437,8 +462,11 @@ def main() -> None:
     intraday_features = build_intraday_daily_features(intraday_frames)
     external, external_health, external_lineage = load_external_features(ROOT / "data" / "external")
     latest_closed = pd.to_datetime(market["timestamp"]).max().normalize()
+    volume_path = ROOT / "data" / "cache" / "binance_spot_volume_1d.csv"
+    spot_volume, volume_health = refresh_volume(volume_path, latest_closed, refresh=not args.no_refresh)
     evaluated_forecasts = grade_learning_state(learning_state, market, latest_closed, run_at)
-    frame, groups = build_feature_frame(indices, market, astro, intraday_features, external)
+    frame, groups = build_feature_frame(indices, market, astro, intraday_features, external, spot_volume)
+    print("Features ready; starting purged directional walk-forward", flush=True)
     analog_columns = [
         "index_BTC", "index_me", "gap_index", "index_btc_change_1", "index_me_change_1",
         "index_btc_slope_3", "index_me_slope_3", "index_corr_5", "composite", "finance",
@@ -449,7 +477,8 @@ def main() -> None:
     full = _restore_backtest(previous_payload, "Full Hybrid") if args.fast else None
     pipeline_mode = "fast-daily" if calendar is not None and full is not None else "full-research"
     if calendar is None or full is None:
-        calendar = run_walk_forward(
+        calendar = checkpointed_walk_forward(
+            ROOT,
             frame,
             groups["calendar"],
             analog_columns,
@@ -458,7 +487,8 @@ def main() -> None:
             len(groups["sequence_calendar_base"]),
             args.deep,
         )
-        full = run_walk_forward(
+        full = checkpointed_walk_forward(
+            ROOT,
             frame,
             groups["full"],
             analog_columns + ["market_return_1", "volatility_7", "rsi14", "atr14_pct"],
@@ -514,14 +544,7 @@ def main() -> None:
             registry, learning_state, "Full Hybrid", as_of_closed=latest_closed,
         ),
     )
-    fusion_capacity = full_capacity
-    if not full_future.empty:
-        fusion_capacity = (
-            pd.concat([full_capacity, full_future[["date", "forecast"]]], ignore_index=True)
-            .drop_duplicates("date", keep="last")
-            .sort_values("date")
-            .reset_index(drop=True)
-        )
+    fusion_capacity = _reserve_next_session(full_capacity, full_future)
     calendar_future, calendar_selection, calendar_registry = fit_latest_forecasts(
         frame,
         groups["calendar"],
@@ -542,6 +565,8 @@ def main() -> None:
     full_selection = _enrich_selection(full_selection, full.model_metrics)
     calendar_future = _apply_trade_gate(calendar_future, calendar.model_metrics, calendar_selection)
     full_future = _apply_trade_gate(full_future, full.model_metrics, full_selection)
+    # Use issuance time after training, not the start of a potentially long run.
+    run_at = utc_now().strftime("%Y-%m-%dT%H:%M:%SZ")
     if not calendar_future.empty:
         append_official_forecast(
             learning_state,
@@ -664,7 +689,13 @@ def main() -> None:
     record_source_revision(learning_state, data_lineage, run_at)
     information_cutoff = (latest_closed + pd.Timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
     first_target = (latest_closed + pd.Timedelta(days=FORECAST_LEAD_DAYS)).strftime("%Y-%m-%dT00:00:00Z")
+    print("Directional research ready; evaluating large-move models", flush=True)
+    large_moves = build_large_move_research(frame, groups, market, learning_state, run_at,
+                                          previous_payload.get("large_moves"), args.fast)
+    flow_history = spot_volume.merge(volume_features(spot_volume), on="date") if len(spot_volume) else spot_volume
     payload = {
+        "large_moves": large_moves,
+        "market_activity": {"health": volume_health, "history": serialize_frame(flow_history)},
         "meta": {
             "schema_version": 5,
             "generated_at": run_at,
@@ -695,6 +726,7 @@ def main() -> None:
                 "revision_digest": learning_state.get("source_revisions", [{}])[-1].get("digest"),
             },
             "validation": {
+                "protocol": RESEARCH_PROTOCOL,
                 "outer": "monthly rolling walk-forward",
                 "rolling_train_days": 1460,
                 "purge_days": 7,
@@ -717,6 +749,8 @@ def main() -> None:
                 "drift_action": "recent Page-Hinkley deterioration suspends execution but preserves forecasts",
                 "pattern_lead_search_days": 3,
                 "pattern_shape_duration_days": "1-6",
+                "quota_allocation": "chronological, prefix-invariant; no later-date probability sorting",
+                "class_probability": "UP/DOWN class probabilities refer to returns beyond +/-1%, not the +/-3% exact-grade threshold",
             },
         },
         "health": {
@@ -796,15 +830,20 @@ def main() -> None:
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    content = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
-    args.output.write_text(content, encoding="utf-8")
+    from research.verify_artifact import verify
+
+    verify(payload, learning_state)
+    content = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), allow_nan=False)
     mirror = ROOT / "data" / "hybrid_research.json"
-    mirror.write_text(content, encoding="utf-8")
-    core_content = json.dumps(_core_payload(payload), ensure_ascii=True, separators=(",", ":"))
+    core_content = json.dumps(_core_payload(payload), ensure_ascii=True, separators=(",", ":"), allow_nan=False)
     core_output = args.output.with_name("hybrid_research_core.json")
-    core_output.write_text(core_content, encoding="utf-8")
-    (ROOT / "data" / "hybrid_research_core.json").write_text(core_content, encoding="utf-8")
-    learning_state_path.write_text(serialize_learning_state(learning_state), encoding="utf-8")
+    outputs = {args.output: content, mirror: content, core_output: core_content,
+               ROOT / "data" / "hybrid_research_core.json": core_content,
+               learning_state_path: serialize_learning_state(learning_state)}
+    for path, text in outputs.items():
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(text, encoding="utf-8")
+        temporary.replace(path)
     print(json.dumps({
         "output": str(args.output),
         "bytes": len(content),

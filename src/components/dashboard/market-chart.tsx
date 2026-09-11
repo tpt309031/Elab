@@ -8,6 +8,7 @@ import {
   createChart,
   createSeriesMarkers,
   LineSeries,
+  HistogramSeries,
   type BusinessDay,
   type CandlestickData,
   type LineData,
@@ -15,12 +16,13 @@ import {
   type Time,
 } from "lightweight-charts";
 
-import type { ForecastRow, IndexRow, MarketRow } from "@/lib/types";
+import type { ForecastRow, IndexRow, MarketRow, SpotVolumeRow } from "@/lib/types";
 
 interface MarketChartProps {
   market: MarketRow[];
   indices: IndexRow[];
   forecasts: ForecastRow[];
+  volume?: SpotVolumeRow[];
 }
 
 function timeLabel(time: Time | undefined): string {
@@ -31,7 +33,7 @@ function timeLabel(time: Time | undefined): string {
   return `${day.year}-${String(day.month).padStart(2, "0")}-${String(day.day).padStart(2, "0")}`;
 }
 
-export function MarketChart({ market, indices, forecasts }: MarketChartProps) {
+export function MarketChart({ market, indices, forecasts, volume }: MarketChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const indexByDate = useMemo(() => new Map(indices.map((row) => [row.date, row])), [indices]);
@@ -101,6 +103,16 @@ export function MarketChart({ market, indices, forecasts }: MarketChartProps) {
     btcIndex.setData(btcIndexData);
     traderIndex.setData(traderIndexData);
     const marketDates = new Set(market.map((row) => row.timestamp.slice(0, 10)));
+    const volumeRows = (volume ?? []).filter((row) => marketDates.has(row.date));
+    if (volumeRows.length) {
+      const flow = chart.addSeries(HistogramSeries, {
+        title: "Binance spot BTC volume",
+        priceFormat: { type: "volume" },
+        priceLineVisible: false,
+      }, 2);
+      flow.setData(volumeRows.map((row) => ({ time: row.date as Time, value: row.base_volume,
+        color: (row.spot_taker_imbalance ?? 0) >= 0 ? "#34d39970" : "#ef444470" })));
+    }
     const markerLimit = compact
       ? Math.min(5, Math.max(3, Math.ceil(marketDates.size / 21)))
       : Math.min(12, Math.max(4, Math.ceil(marketDates.size / 10)));
@@ -124,8 +136,9 @@ export function MarketChart({ market, indices, forecasts }: MarketChartProps) {
       }));
     createSeriesMarkers(candles, markerData);
     const panes = chart.panes();
-    panes[0]?.setHeight(compact ? 310 : 410);
-    panes[1]?.setHeight(compact ? 170 : 210);
+    panes[0]?.setHeight(compact ? 250 : 330);
+    panes[1]?.setHeight(compact ? 150 : 200);
+    panes[2]?.setHeight(compact ? 80 : 90);
     chart.timeScale().fitContent();
 
     chart.subscribeCrosshairMove((parameter) => {
@@ -145,15 +158,16 @@ export function MarketChart({ market, indices, forecasts }: MarketChartProps) {
     const observer = new ResizeObserver(() => {
       const mobile = container.clientWidth < 640;
       chart.applyOptions({ width: container.clientWidth, height: mobile ? 480 : 620 });
-      chart.panes()[0]?.setHeight(mobile ? 310 : 410);
-      chart.panes()[1]?.setHeight(mobile ? 170 : 210);
+      chart.panes()[0]?.setHeight(mobile ? 250 : 330);
+      chart.panes()[1]?.setHeight(mobile ? 150 : 200);
+      chart.panes()[2]?.setHeight(mobile ? 80 : 90);
     });
     observer.observe(container);
     return () => {
       observer.disconnect();
       chart.remove();
     };
-  }, [forecasts, indexByDate, indices, market]);
+  }, [forecasts, indexByDate, indices, market, volume]);
 
   return (
     <div className="relative min-h-[480px] w-full overflow-hidden border border-border bg-card sm:min-h-[620px]">

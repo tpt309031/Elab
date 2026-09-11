@@ -333,7 +333,73 @@ export interface FoldMetric {
   uniform_ensemble_log_loss?: number;
 }
 
+export interface SpotVolumeRow {
+  date: string;
+  base_volume: number;
+  quote_volume: number;
+  trades: number;
+  taker_buy_base: number;
+  spot_rvol20: number | null;
+  spot_quote_z20: number | null;
+  spot_taker_imbalance: number | null;
+}
+
+export interface LargeMoveRow {
+  date: string;
+  lane: string;
+  horizon: number;
+  probability: number;
+  alert: boolean;
+  alert_threshold: number;
+  threshold_move: number;
+  model: string;
+  candidates: Record<string, number>;
+  actual_event: number | null;
+  actual_move: number | null;
+  actual_range: number | null;
+  status: "pending" | "hit" | "false-alarm" | "missed" | "quiet";
+  source: "walk-forward" | "official";
+  issued_at?: string;
+  evaluated_at?: string;
+}
+
+export interface LargeMoveMetric {
+  source: string;
+  lane: string;
+  horizon: number;
+  model: string;
+  samples: number;
+  events: number;
+  alerts: number;
+  hits: number;
+  false_alarms: number;
+  missed: number;
+  precision: number | null;
+  precision_lcb: number | null;
+  recall: number | null;
+  base_rate: number;
+  average_precision: number | null;
+  brier: number;
+  brier_skill: number | null;
+  start: string;
+  end: string;
+}
+
 export interface ResearchArtifact {
+  market_activity?: {
+    health: { source: string; status: string; latest_closed_utc: string | null; rows: number; missing_days: number; errors: string[] };
+    history: SpotVolumeRow[];
+  };
+  large_moves?: {
+    version: string;
+    generated_at: string;
+    next: LargeMoveRow[];
+    historical: LargeMoveRow[];
+    official: LargeMoveRow[];
+    metrics: LargeMoveMetric[];
+    definitions: Record<string, string>;
+    evaluated_this_run: number;
+  };
   meta: {
     schema_version: number;
     generated_at: string;
@@ -501,6 +567,13 @@ export interface DeepResearchArtifact {
 }
 
 export interface SystemHealthResponse {
+  research?: {
+    oosEnd: string;
+    stale: boolean;
+    volumeStatus: string;
+    overdueDailyGrades: number;
+    overdueEventGrades: number;
+  };
   status: "healthy" | "degraded" | "unhealthy";
   checkedAt: string;
   expectedClosedUtc: string;

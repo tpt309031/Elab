@@ -150,7 +150,7 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
             closed_at_issue = pd.Timestamp(row["closed_through_at_issue"]).normalize()
             if target < closed_at_issue + pd.Timedelta(days=2):
                 raise AssertionError(f"forecast violates publication lead: {row['forecast_id']}")
-        if target <= latest_closed and not row.get("evaluated_at"):
+        if target <= latest_closed and generated_at >= target + pd.Timedelta(days=1, hours=3) and not row.get("evaluated_at"):
             raise AssertionError(f"closed forecast was not evaluated: {row['forecast_id']}")
         if row.get("evaluated_at"):
             evaluated += 1
@@ -267,6 +267,33 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
     if {str(row.get("event_id")) for row in artifact_events} != set(event_ids):
         raise AssertionError("published event ledger and production state disagree")
     selection_history = state.get("selection_history", [])
+    magnitude = artifact.get("large_moves")
+    if isinstance(magnitude, dict):
+        from research.large_moves import _digest, event_metrics
+
+        official_magnitude = state.get("large_move_forecasts", [])
+        if magnitude.get("official") != official_magnitude:
+            raise AssertionError("Large-move artifact and ledger disagree")
+        seen = set()
+        for row in official_magnitude:
+            if row.get("id") in seen or row.get("digest") != _digest(row):
+                raise AssertionError("Large-move forecast identity or digest mismatch")
+            seen.add(row["id"])
+            if pd.Timestamp(row["issued_at"]) >= pd.Timestamp(row["date"], tz="UTC"):
+                raise AssertionError("Large-move forecast issued after target opened")
+            if not 0 <= float(row["probability"]) <= 1:
+                raise AssertionError("Invalid event probability")
+            mature = pd.Timestamp(row["date"]) + pd.Timedelta(days=int(row["horizon"]), hours=3)
+            if generated_at >= mature and row.get("evaluated_at") is None:
+                raise AssertionError("Mature large-move forecast was not graded")
+        for row in magnitude.get("historical", []):
+            target = pd.Timestamp(row["date"])
+            last_label = pd.Timestamp(row["selection_end"]) + pd.Timedelta(days=int(row["horizon"]) - 1)
+            if last_label > target - pd.Timedelta(days=2):
+                raise AssertionError("Event selection used an unavailable forward label")
+        recalculated = event_metrics([*magnitude.get("historical", []), *official_magnitude])
+        if recalculated != magnitude.get("metrics"):
+            raise AssertionError("Large-move metrics disagree with stored predictions")
     if not selection_history or selection_history[-1].get("as_of_closed") != latest_closed.strftime("%Y-%m-%d"):
         raise AssertionError("daily selection snapshot is missing")
     return {

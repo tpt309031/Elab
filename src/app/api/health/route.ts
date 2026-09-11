@@ -53,6 +53,18 @@ export async function GET() {
     response.artifact.marketHealth = artifact.health?.market.status ?? "unknown";
     response.artifact.stale = artifact.meta.latest_closed_utc < expectedClosedUtc || Boolean(artifact.health?.market.stale);
     if (response.artifact.stale) response.status = "unhealthy";
+    const due = (date: string, days: number) => Date.now() >= new Date(`${date}T00:00:00Z`).getTime() + (days * 24 + 3) * 3_600_000;
+    const overdueDailyGrades = (artifact.learning?.official_forecast_ledger ?? []).filter((row) => !row.evaluated_at && due(row.target_date ?? row.date, 1)).length;
+    const overdueEventGrades = (artifact.large_moves?.official ?? []).filter((row) => !row.evaluated_at && due(row.date, row.horizon)).length;
+    response.research = {
+      oosEnd: artifact.meta.oos_end,
+      stale: artifact.meta.oos_end < utcDate(10),
+      volumeStatus: artifact.market_activity?.health.status ?? "unavailable",
+      overdueDailyGrades,
+      overdueEventGrades,
+    };
+    if (overdueDailyGrades || overdueEventGrades) response.status = "unhealthy";
+    else if (response.status === "healthy" && (response.research.stale || response.research.volumeStatus !== "healthy")) response.status = "degraded";
   } catch (error) {
     response.status = "unhealthy";
     response.artifact.error = error instanceof Error ? error.message : "Hybrid artifact could not be read";

@@ -8,3 +8,4 @@ __pycache__/
 .venv/
 .vercel/
 *.log
+data/.research-cache/

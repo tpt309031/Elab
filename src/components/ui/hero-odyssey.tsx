@@ -315,7 +315,7 @@ export function HeroOdyssey({
             </div>
             <div className="mt-3 flex justify-between gap-3 font-mono text-[10px] text-white/45">
               <span>{forecastDate ?? "Awaiting refresh"}</span>
-              <span>{forecastConfidence == null ? "--" : `${Math.round(forecastConfidence * 100)}% score`}</span>
+              <span>{forecastConfidence == null ? "--" : `${Math.round(forecastConfidence * 100)}% class prob.`}</span>
             </div>
           </motion.div>
         </div>

@@ -9,6 +9,8 @@ interface DecisionStripProps {
   forecast?: ForecastRow;
   meta: ResearchArtifact["meta"];
   marketStale?: boolean;
+  researchStale?: boolean;
+  gradingOverdue?: boolean;
 }
 
 const directionTone = {
@@ -18,9 +20,9 @@ const directionTone = {
   "no-call": "text-muted-foreground",
 } as const;
 
-export function DecisionStrip({ forecast, meta, marketStale = false }: DecisionStripProps) {
+export function DecisionStrip({ forecast, meta, marketStale = false, researchStale = false, gradingOverdue = false }: DecisionStripProps) {
   const tradeAction = forecast?.trade_action ?? "flat";
-  const tradeEligible = Boolean(forecast?.trade_eligible && tradeAction !== "flat");
+  const tradeEligible = Boolean(forecast?.trade_eligible && tradeAction !== "flat" && !marketStale && !researchStale && !gradingOverdue);
   const provenanceWarning = meta.provenance?.status === "research-only";
   const confidence = forecast?.confidence
     ?? (forecast ? Math.max(forecast.prob_down, forecast.prob_sideway, forecast.prob_up) : undefined);
@@ -35,6 +37,8 @@ export function DecisionStrip({ forecast, meta, marketStale = false }: DecisionS
         </div>
         <div className="flex flex-wrap gap-2">
           <Badge variant={marketStale ? "destructive" : "outline"}>{marketStale ? "STALE MARKET" : "MARKET CURRENT"}</Badge>
+          {researchStale && <Badge variant="destructive">STALE RESEARCH</Badge>}
+          {gradingOverdue && <Badge variant="destructive">GRADING OVERDUE</Badge>}
           <Badge variant={provenanceWarning ? "secondary" : "outline"}>{provenanceWarning ? "RESEARCH-ONLY PROVENANCE" : "PIT VERIFIED"}</Badge>
         </div>
       </header>
@@ -55,9 +59,9 @@ export function DecisionStrip({ forecast, meta, marketStale = false }: DecisionS
           <small className="line-clamp-2 text-muted-foreground">{forecast?.trade_gate_reason ?? "Awaiting schema v5 execution gate"}</small>
         </div>
         <div className="p-3 sm:p-4">
-          <p className="eyebrow">Forecast confidence</p>
+          <p className="eyebrow">Class probability</p>
           <strong className="mt-2 block font-mono text-2xl">{formatPercent(confidence)}</strong>
-          <small className="text-muted-foreground">expected grade {formatPercent(forecast?.expected_score)}</small>
+          <small className="text-muted-foreground">not the probability of an exact daily grade</small>
         </div>
         <div className="p-3 sm:p-4">
           <p className="eyebrow">After-cost edge</p>
@@ -73,10 +77,10 @@ export function DecisionStrip({ forecast, meta, marketStale = false }: DecisionS
         </div>
       </div>
 
-      {(provenanceWarning || marketStale) && (
+      {(provenanceWarning || marketStale || researchStale || gradingOverdue) && (
         <div className="flex gap-2 border-t border-amber-500/25 bg-amber-500/5 px-3 py-2.5 text-xs text-amber-100/80 sm:px-4">
           {marketStale ? <AlertTriangle className="size-4 shrink-0 text-red-400" /> : <ShieldCheck className="size-4 shrink-0 text-amber-400" />}
-          <span>{marketStale ? "Execution is suspended until the latest closed BTC candle is available." : meta.provenance?.warnings[0] ?? "Private-source point-in-time coverage is incomplete."}</span>
+          <span>{marketStale ? "Execution is suspended until the latest closed BTC candle is available." : researchStale || gradingOverdue ? "Execution is suspended until overdue research and grading checks recover." : meta.provenance?.warnings[0] ?? "Private-source point-in-time coverage is incomplete."}</span>
         </div>
       )}
       <div className="flex items-center gap-2 border-t border-border px-3 py-2 text-[10px] text-muted-foreground sm:px-4">

@@ -73,7 +73,7 @@ function DayCard({ date, day, row, today, selectedDate, mobile = false, onSelect
           </span>
           <span className="min-w-0">
             <strong className={cn("block font-mono text-lg", move == null ? "text-white/55" : move >= 0 ? "text-emerald-50" : "text-red-50")}>
-              {move == null ? "Move pending" : `${move > 0 ? "+" : ""}${(move * 100).toFixed(1)}%`}
+              {move == null ? "Move pending" : `${move > 0 ? "+" : ""}${(move * 100).toFixed(2)}%`}
             </strong>
             <small className="block truncate text-[10px] text-white/65">{row?.trade_gate_reason ?? "No published forecast"}</small>
           </span>
@@ -87,7 +87,7 @@ function DayCard({ date, day, row, today, selectedDate, mobile = false, onSelect
         <>
           <span className="font-mono text-xs text-white/80">{day}</span>
           <strong className={cn("truncate font-mono text-lg tracking-tight", move == null ? "text-white/55" : move >= 0 ? "text-emerald-50" : "text-red-50")}>
-            {move == null ? "—" : `${move > 0 ? "+" : ""}${(move * 100).toFixed(1)}%`}
+            {move == null ? "—" : `${move > 0 ? "+" : ""}${(move * 100).toFixed(2)}%`}
           </strong>
           <span className="flex min-w-0 flex-col font-mono text-[9px] uppercase leading-tight text-white/80">
             <b className="truncate font-medium">{row?.forecast ?? "NO FORECAST"}</b>

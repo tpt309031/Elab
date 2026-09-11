@@ -89,6 +89,9 @@ def test_market_features_respect_two_session_publication_lead() -> None:
     expected = close.pct_change().iloc[80]
     observed = frame.loc[frame["date"] == dates[82], "market_return_1"].iloc[0]
     assert np.isclose(observed, expected)
+    future = frame[frame["date"] == dates[-1] + pd.Timedelta(days=2)].iloc[0]
+    assert np.isclose(future["market_return_1"], close.pct_change().iloc[-1])
+    assert pd.isna(future["daily_return"])
 
 
 def test_forecast_policy_caps_sideway_at_eight_per_month() -> None:

@@ -40,11 +40,15 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
   const [lane, setLane] = useState<"calendar" | "full">("full");
   const [month, setMonth] = useState(initialMonth);
   const [direction, setDirection] = useState<ForecastDirection | "all">("all");
-  const [selected, setSelected] = useState<ForecastRow>();
+  const [selectedDate, setSelectedDate] = useState<string>();
+  const [evidence, setEvidence] = useState("all");
+  const officialRows = useMemo(() => (data.learning?.official_forecast_ledger ?? [])
+    .filter((row) => row.lane === (lane === "calendar" ? "Calendar" : "Full Hybrid"))
+    .map((row) => ({ ...row, daily_return: row.actual_return, lane: `${row.lane} · official` })), [data, lane]);
   const laneRows = useMemo(() => {
-    const official = (data.learning?.official_forecast_ledger ?? [])
-      .filter((row) => row.lane === (lane === "calendar" ? "Calendar" : "Full Hybrid"))
-      .map((row) => ({ ...row, daily_return: row.actual_return, lane: `${row.lane} · official` }));
+    const official = officialRows;
+    if (evidence === "official") return official;
+    if (evidence === "oos") return lane === "calendar" ? data.forecast.historical_calendar_oos : data.forecast.historical_full_hybrid_oos;
     return lane === "calendar"
       ? mergeForecastRows(data.forecast.historical_calendar_oos, data.forecast.calendar, official)
       : mergeForecastRows(
@@ -52,8 +56,10 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
         buildFusionFutureRows(data.forecast.calendar, data.forecast.full_hybrid_next_session),
         official,
       );
-  }, [data, lane]);
+  }, [data, lane, evidence, officialRows]);
   const filtered = useMemo(() => laneRows.filter((row) => row.date.startsWith(month) && (direction === "all" || row.forecast === direction)), [direction, laneRows, month]);
+  const selected = filtered.find((row) => row.date === selectedDate);
+  const selectedEvents = data.large_moves?.official.filter((row) => row.date === selectedDate && row.lane === (lane === "calendar" ? "Index + Astro" : "Hybrid + Volume")) ?? [];
   const years = useMemo(() => [...new Set(laneRows.map((row) => row.date.slice(0, 4)))].sort(), [laneRows]);
   const selectedYear = month.slice(0, 4);
   const selectedMonth = month.slice(5, 7);
@@ -84,8 +90,12 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
         </div>
       </div>
       {lane === "full" && <p className="border-l-2 border-primary bg-primary/5 px-3 py-2 text-xs text-muted-foreground">The first publishable UTC session uses Full Hybrid. Later dates are Index + Astro outlooks because future market bars do not exist yet. Monthly policy allows at most 8 SIDEWAY calls and 4 NO CALL sessions; only rows marked TRADE pass the after-cost execution gate.</p>}
-      <AccuracyBar rows={laneRows} />
-      <ForecastCalendar month={month} rows={filtered} selectedDate={selected?.date} onMonthChange={setMonth} onSelect={setSelected} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-muted-foreground">Accuracy for {month} and the selected direction filter. Historical research and live results are different evidence.</p>
+        <Select value={evidence} onValueChange={setEvidence}><SelectTrigger className="w-full sm:w-56" aria-label="Forecast evidence"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Calendar overview</SelectItem><SelectItem value="official">Published forecasts only</SelectItem><SelectItem value="oos">Walk-forward only</SelectItem></SelectContent></Select>
+      </div>
+      <AccuracyBar rows={filtered} />
+      <ForecastCalendar month={month} rows={filtered} selectedDate={selected?.date} onMonthChange={setMonth} onSelect={(row) => setSelectedDate(row.date)} />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
         <details className="group border border-border bg-card" open={Boolean(selected)}>
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
@@ -109,6 +119,9 @@ export function ForecastPanel({ data }: ForecastPanelProps) {
                   <div className="border border-border p-3"><p className="eyebrow">SIDEWAY</p><strong className="font-mono text-amber-300">{formatPercent(selected.prob_sideway)}</strong></div>
                   <div className="border border-border p-3"><p className="eyebrow">DOWN</p><strong className="font-mono text-red-400">{formatPercent(selected.prob_down)}</strong></div>
                 </div>
+                <p className="text-[11px] leading-5 text-muted-foreground">These class probabilities use UP &gt;+1%, DOWN &lt;-1%, SIDEWAY within +/-1%. They are not the probability of an exact +/-3% daily grade. Daily outcomes remain Correct, Partial or Wrong.</p>
+                {selected.sideway_cap_override && <p className="border border-amber-500/30 p-2 text-xs text-amber-200">Monthly quota changed the preferred SIDEWAY decision. This forced directional outlook is not additional model evidence.</p>}
+                {selectedEvents.length > 0 && <div className="border border-border p-3 text-xs"><p className="eyebrow mb-2">Separately published magnitude forecast</p>{selectedEvents.map((row) => <p key={row.horizon} className="mt-1">{row.horizon}D |move| &gt; {formatPercent(row.threshold_move, 0)}: <b>{formatPercent(row.probability)}</b> · {row.status} · actual {formatSignedPercent(row.actual_move)}</p>)}</div>}
                 {selected.top_pattern && <p className="text-sm text-muted-foreground"><Target className="mr-2 inline size-4 text-primary" />Pattern #{selected.top_pattern.rank}: <span className="text-foreground">{selected.top_pattern.name}</span> · {selected.top_pattern.occurrences} occurrences · {formatPercent(selected.top_pattern.weighted_accuracy)} · {selected.top_pattern.duration_days ?? 1}d shape / +{selected.top_pattern.signal_lag_days ?? 0}d lead</p>}
                 <div className="grid gap-2 border-t border-border pt-3 text-xs text-muted-foreground sm:grid-cols-2"><p><b className="text-foreground">Execution:</b> {selected.trade_gate_reason ?? "Legacy forecast without execution gate"}</p><p><b className="text-foreground">Timing:</b> information cutoff {selected.information_cutoff_utc?.slice(0, 10) ?? "legacy"}; target opens {selected.target_start_utc?.slice(0, 10) ?? selected.date} UTC.</p></div>
               </div>

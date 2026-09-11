@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate, formatPercent } from "@/lib/format";
 import type { EventEvaluation, ResearchArtifact } from "@/lib/types";
+import { MarketActivityPanel } from "@/components/dashboard/market-activity-panel";
 
 interface EventLabProps {
   data: ResearchArtifact;
@@ -48,14 +49,18 @@ export function EventLab({ data }: EventLabProps) {
     .filter((event) => status === "all" || event.status === status)
     .filter((event) => source === "all" || event.source_type === source)
     .sort((left, right) => right.target_date.localeCompare(left.target_date)), [events, lane, source, status]);
-  const evaluated = events.filter((event) => event.status !== "pending");
-  const matched = events.filter((event) => event.status === "matched");
+  const evaluated = filtered.filter((event) => event.status !== "pending");
+  const matched = filtered.filter((event) => event.status === "matched");
   const definitions = data.research.event_definitions ?? {};
 
   return (
     <div className="space-y-4">
+      <MarketActivityPanel data={data} />
+      <details className="border border-border bg-card p-4">
+      <summary className="cursor-pointer text-sm font-medium">Legacy pivot / wick associations (not forecast accuracy)</summary>
+      <p className="my-4 text-xs leading-5 text-muted-foreground">This retrospective +/-3-day association window may include events before publication. Its match rate must not be interpreted as prospective precision or used to change daily grades. Use the forward-only magnitude audit above for large-move forecast performance.</p>
       <div className="flex flex-col gap-3 border border-border bg-card p-3 lg:flex-row lg:items-center lg:justify-between">
-        <div><p className="eyebrow">separate research ledger</p><h2 className="mt-1 text-xl font-semibold">Pivot and large-move Event Lab</h2></div>
+        <div><p className="eyebrow">legacy temporal association</p><h2 className="mt-1 text-xl font-semibold">Pivot and wick research</h2></div>
         <div className="grid grid-cols-3 gap-2">
           <Select value={lane} onValueChange={setLane}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All lanes</SelectItem><SelectItem value="Calendar">Calendar</SelectItem><SelectItem value="Full Hybrid">Full Hybrid</SelectItem></SelectContent></Select>
           <Select value={source} onValueChange={setSource}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All sources</SelectItem><SelectItem value="official">Official</SelectItem><SelectItem value="model">Model</SelectItem><SelectItem value="pattern">Pattern</SelectItem></SelectContent></Select>
@@ -64,7 +69,7 @@ export function EventLab({ data }: EventLabProps) {
       </div>
 
       <div className="grid gap-2 sm:grid-cols-3">
-        <Card><CardContent className="p-4"><p className="eyebrow">Event records</p><strong className="metric-value mt-2 block">{events.length}</strong><small className="text-muted-foreground">daily grades remain immutable</small></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="eyebrow">Filtered records</p><strong className="metric-value mt-2 block">{filtered.length}</strong><small className="text-muted-foreground">daily grades remain immutable</small></CardContent></Card>
         <Card><CardContent className="p-4"><p className="eyebrow">Matured</p><strong className="metric-value mt-2 block">{evaluated.length}</strong><small className="text-muted-foreground">outside the full ±3d window</small></CardContent></Card>
         <Card><CardContent className="p-4"><p className="eyebrow">Match rate</p><strong className="metric-value mt-2 block">{evaluated.length ? formatPercent(matched.length / evaluated.length) : "—"}</strong><small className="text-muted-foreground">event match, not daily correctness</small></CardContent></Card>
       </div>
@@ -85,6 +90,7 @@ export function EventLab({ data }: EventLabProps) {
       )}
       {filtered.length > 60 && <div className="flex items-center gap-2 border border-border bg-card p-3 text-xs text-muted-foreground"><Clock3 className="size-4 text-primary" />Showing the 60 most recent records of {filtered.length}. Filters remain applied.</div>}
       <div className="flex gap-2 border border-amber-500/25 bg-amber-500/5 p-3 text-xs text-amber-100/80"><Target className="size-4 shrink-0 text-amber-400" /><p>Event matching is delayed by design until the complete research window matures. The official one-day forecast is still graded only as correct, partial, or wrong immediately after the UTC candle closes.</p></div>
+      </details>
     </div>
   );
 }

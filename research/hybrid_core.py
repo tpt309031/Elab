@@ -38,6 +38,7 @@ SIDEWAY_LIMIT = 0.01
 # future forecasts. They limit class concentration without changing outcomes.
 MAX_SIDEWAY_PER_MONTH = 8
 MAX_NO_CALL_PER_MONTH = 4
+RESEARCH_PROTOCOL = "causal-quota-calibrated-volume-v2"
 UP_PARTIAL_MIN = 0.001
 DOWN_PARTIAL_MAX = -0.001
 TRADING_COST = 0.0005
@@ -242,7 +243,8 @@ def _prepare_daily_market(frame: pd.DataFrame, closed_end: pd.Timestamp) -> pd.D
     if output.empty:
         raise RuntimeError("Daily market data is empty after closed-candle filtering")
     invalid = (
-        (output[["open", "high", "low", "close"]] <= 0).any(axis=1)
+        ~np.isfinite(output[required[1:]]).all(axis=1)
+        | (output[["open", "high", "low", "close"]] <= 0).any(axis=1)
         | (output["volume"] < 0)
         | (output["high"] < output[["open", "close"]].max(axis=1))
         | (output["low"] > output[["open", "close"]].min(axis=1))
@@ -454,6 +456,7 @@ def build_feature_frame(
     astro: pd.DataFrame,
     intraday: pd.DataFrame | None = None,
     external: pd.DataFrame | None = None,
+    spot_volume: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, dict[str, list[str]]]:
     market = market.copy().sort_values("timestamp")
     market["date"] = pd.to_datetime(market["timestamp"]).dt.normalize()
@@ -481,15 +484,25 @@ def build_feature_frame(
         "volatility_7", "volatility_21", "distance_ma20", "distance_ma50", "ema_gap_12_26",
         "rsi14", "atr14_pct", "volume_z20", "body_pct", "upper_wick_ratio", "lower_wick_ratio", "range_pct",
     ]
-    market_features = market[target_columns + technical_columns].copy()
     # The daily research run completes after UTC day D+1 has opened. A forecast
     # published by that run therefore targets D+2 and may only use market data
     # closed through D.
-    market_features[technical_columns] = market_features[technical_columns].shift(FORECAST_LEAD_DAYS)
+    technical = market[["date", *technical_columns]].copy()
+    technical["date"] += pd.Timedelta(days=FORECAST_LEAD_DAYS)
+    market_features = market[target_columns].merge(technical, on="date", how="outer")
 
     frame = astro.copy()
     frame = frame.merge(indices, on="date", how="outer")
     frame = frame.merge(market_features, on="date", how="outer").sort_values("date").reset_index(drop=True)
+    if spot_volume is not None and not spot_volume.empty:
+        from research.volume import volume_features
+
+        flow = volume_features(spot_volume)
+        flow_columns = [column for column in flow if column != "date"]
+        # Shift timestamps, not rows: a missing candle cannot shorten the lag.
+        flow["date"] += pd.Timedelta(days=FORECAST_LEAD_DAYS)
+        frame = frame.merge(flow, on="date", how="left")
+        technical_columns.extend(flow_columns)
     for availability_column, imputed_column in (
         ("index_BTC_available_at", "index_BTC_availability_imputed"),
         ("index_me_available_at", "index_me_availability_imputed"),
@@ -878,59 +891,32 @@ def allocate_monthly_directions(
         for value in (excluded_dates or [])
     }
 
-    if max_sideway_per_month is not None:
-        for month_key in pd.unique(month_keys):
-            available = max(0, max_sideway_per_month - existing.get(str(month_key), 0))
-            candidates = np.flatnonzero(
-                (month_keys == month_key)
-                & (selected == sideway_index)
-                & ~np.isin(date_keys, list(excluded))
-            )
-            if len(candidates) <= available:
-                continue
-            directional_best = np.maximum(utilities[candidates, 0], utilities[candidates, 2])
-            sideway_advantage = utilities[candidates, sideway_index] - directional_best
-            order = np.argsort(-sideway_advantage, kind="stable")
-            rejected = candidates[order[available:]]
-            selected[rejected] = np.where(
-                utilities[rejected, CLASS_TO_INDEX["up"]] > utilities[rejected, CLASS_TO_INDEX["down"]],
-                CLASS_TO_INDEX["up"],
-                CLASS_TO_INDEX["down"],
-            )
-            overridden[rejected] = True
-
-    expected_scores = utilities[np.arange(len(selected)), selected]
-    margins = np.empty(len(selected), dtype=float)
-    for row_index, direction_index in enumerate(selected):
-        alternatives = np.delete(utilities[row_index], direction_index)
-        margins[row_index] = expected_scores[row_index] - float(np.max(alternatives))
+    if len(set(date_keys)) != len(date_keys):
+        raise ValueError("Monthly allocation requires one prediction per UTC date")
     directions = np.asarray(CLASS_NAMES, dtype=object)[selected]
-    if allow_no_call and max_no_call_per_month > 0:
-        selected_confidence = probabilities[np.arange(len(selected)), selected]
-        utility_order = np.sort(utilities, axis=1)
-        utility_margin = utility_order[:, -1] - utility_order[:, -2]
-        uncertain = overridden | (selected_confidence < 0.42) | (utility_margin < 0.025)
-        uncertainty_score = (
-            (1.0 - selected_confidence)
-            + np.clip(0.025 - utility_margin, 0.0, None) * 4.0
-            + overridden.astype(float)
-        )
-        for month_key in pd.unique(month_keys):
-            available = max(0, max_no_call_per_month - existing_no_call.get(str(month_key), 0))
-            if available == 0:
-                continue
-            candidates = np.flatnonzero(
-                (month_keys == month_key)
-                & uncertain
-                & ~np.isin(date_keys, list(excluded))
-            )
-            if not len(candidates):
-                continue
-            order = np.argsort(-uncertainty_score[candidates], kind="stable")
-            abstained = candidates[order[:available]]
-            directions[abstained] = "no-call"
-            expected_scores[abstained] = np.nan
-            margins[abstained] = np.nan
+    expected_scores = np.full(len(selected), np.nan)
+    margins = np.full(len(selected), np.nan)
+    # Prefix invariant: later probabilities cannot change an earlier decision.
+    for i in np.argsort(date_keys, kind="stable"):
+        month = str(month_keys[i])
+        locked = date_keys[i] in excluded
+        direction = selected[i]
+        if (not locked and direction == sideway_index and max_sideway_per_month is not None
+                and existing.get(month, 0) >= max_sideway_per_month):
+            direction = 2 if utilities[i, 2] > utilities[i, 0] else 0
+            overridden[i] = True
+        utility_order = np.sort(utilities[i])
+        uncertain = overridden[i] or probabilities[i, direction] < 0.42 or utility_order[-1] - utility_order[-2] < 0.025
+        if (not locked and allow_no_call and uncertain
+                and existing_no_call.get(month, 0) < max_no_call_per_month):
+            directions[i] = "no-call"
+            existing_no_call[month] = existing_no_call.get(month, 0) + 1
+            continue
+        directions[i] = CLASS_NAMES[direction]
+        expected_scores[i] = utilities[i, direction]
+        margins[i] = expected_scores[i] - float(np.max(np.delete(utilities[i], direction)))
+        if not locked and direction == sideway_index:
+            existing[month] = existing.get(month, 0) + 1
     return directions, expected_scores, margins, overridden
 
 
@@ -988,6 +974,11 @@ def select_decision_policy(
 ) -> tuple[str, float, dict[str, float]]:
     returns = np.asarray(daily_returns, dtype=float)
     policy_dates = dates if dates is not None else pd.date_range("2000-01-01", periods=len(probabilities), freq="D")
+    # Prefer the original OOS observation when rolling validation overlaps it.
+    unique = ~pd.Index(policy_dates).duplicated(keep="first")
+    policy_dates = pd.DatetimeIndex(policy_dates)[unique]
+    probabilities = np.asarray(probabilities)[unique]
+    returns = returns[unique]
     candidates = [
         (mode, penalty)
         for mode in ("probability", "reward")
@@ -1360,9 +1351,9 @@ def _metric_summary(predictions: pd.DataFrame) -> pd.DataFrame:
         exact_accuracy = float((calls["status"] == "correct").mean())
         weighted_accuracy = float(calls["score"].mean())
         sign_hit = calls["directional_hit"].astype(bool)
-        strategy = calls["strategy_return"].fillna(0).to_numpy(dtype=float)
+        strategy = group.sort_values("date")["strategy_return"].fillna(0).to_numpy(dtype=float)
         equity = np.cumprod(1 + strategy)
-        running_peak = np.maximum.accumulate(equity)
+        running_peak = np.maximum.accumulate(np.r_[1.0, equity])[1:]
         drawdown = equity / running_peak - 1
         positive = strategy[strategy > 0].sum()
         negative = -strategy[strategy < 0].sum()
@@ -1394,7 +1385,7 @@ def _metric_summary(predictions: pd.DataFrame) -> pd.DataFrame:
             "sharpe": sharpe,
             "profit_factor": float(positive / negative) if negative > 0 else math.inf,
             "max_drawdown": float(drawdown.min()) if len(drawdown) else 0.0,
-            "expectancy": float(strategy.mean()) if len(strategy) else 0.0,
+            "expectancy": float(calls["strategy_return"].fillna(0).mean()),
             "net_return": float(equity[-1] - 1) if len(equity) else 0.0,
             "turnover": turnover,
         }
@@ -1442,6 +1433,7 @@ def run_walk_forward(
     prior_policy_returns: list[np.ndarray] = []
     prior_policy_dates: list[np.ndarray] = []
     for fold_number, fold in enumerate(folds, start=1):
+        print(f"[{lane}] fold {fold_number}/{len(folds)}: {fold.fold_id}", flush=True)
         train = frame.loc[fold.train_index].copy()
         calibration = frame.loc[fold.calibration_index].copy()
         test = frame.loc[fold.test_index].copy()
@@ -1895,14 +1887,8 @@ def fit_latest_forecasts(
                 calibration_fit_raw, calibration_fit["target"].astype(int).to_numpy(),
             )
             calibration_probabilities = calibrator.transform(policy_raw)
-            final_model = clone(model)
-            development_target = (
-                development[target_column].astype(int)
-                if target_column == "target"
-                else development[target_column].astype(float)
-            )
-            final_model.fit(development[list(model_columns)], development_target)
-            future_raw = _align_probabilities(final_model, final_model.predict_proba(future[list(model_columns)]))
+            # Calibration is tied to this fitted estimator, never a refitted clone.
+            future_raw = _align_probabilities(initial, initial.predict_proba(future[list(model_columns)]))
             future_probabilities = calibrator.transform(future_raw)
         except Exception:
             continue

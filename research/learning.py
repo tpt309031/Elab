@@ -55,6 +55,7 @@ def load_learning_state(path: str | Path) -> dict[str, Any]:
         raise RuntimeError(f"Unsupported learning ledger schema: {source_schema}")
     if (
         not isinstance(payload.get("forecasts", []), list)
+        or not isinstance(payload.get("large_move_forecasts", []), list)
         or not isinstance(payload.get("event_evaluations", []), list)
         or not isinstance(payload.get("selection_history", []), list)
         or not isinstance(payload.get("source_revisions", []), list)
@@ -315,6 +316,8 @@ def append_official_forecast(
         "entropy": forecast.get("entropy"),
         "policy_mode": forecast.get("policy_mode"),
         "sideway_penalty": forecast.get("sideway_penalty"),
+        "sideway_cap_override": bool(forecast.get("sideway_cap_override", False)),
+        "similar_cases": copy.deepcopy(forecast.get("similar_cases", [])),
         "model_members": copy.deepcopy(forecast.get("model_members", [])),
         "model_weights": copy.deepcopy(forecast.get("model_weights", [])),
         "top_pattern": top_pattern,
@@ -355,13 +358,18 @@ def grade_learning_state(
     realized = candles.drop_duplicates("date", keep="last").set_index("date")
     evaluated = 0
     closed_date = pd.Timestamp(latest_closed).normalize()
+    evaluation_time = pd.to_datetime(evaluated_at, utc=True)
     for row in state.get("forecasts", []):
         if row.get("evaluated_at"):
             continue
         target = pd.Timestamp(row.get("target_date", row.get("date"))).normalize()
         if target > closed_date or target not in realized.index:
             continue
+        if evaluation_time < (target + pd.Timedelta(days=1, hours=3)).tz_localize("UTC"):
+            continue
         actual_return = float(realized.at[target, "actual_return"])
+        if not np.isfinite(actual_return):
+            raise ValueError(f"Cannot grade non-finite daily return on {target:%Y-%m-%d}")
         row["actual_return"] = actual_return
         row["evaluated_at"] = evaluated_at
         row["market_close"] = float(realized.at[target, "close"])
