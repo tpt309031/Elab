@@ -91,7 +91,8 @@ used a different, noncausal quota protocol and are not a valid improvement basel
 After-cost expectancy lower bounds remain negative; execution stays FLAT.
 
 The new event audit has 8,856 predictions across three feature sets and three
-horizons. Complete labels number 984 / 982 / 980 per feature set for 1D / 3D / 5D.
+horizons. After refreshing the September 11 candle, complete labels number
+984 / 983 / 981 per feature set for 1D / 3D / 5D.
 Hybrid + Volume selected-model Brier skill versus the pre-test base rate is
 +1.82% / -1.20% / -0.28%, respectively. At the preregistered alert threshold,
 selected models have no correct large-move alerts in this test period. Thus the
@@ -99,11 +100,13 @@ new volume features show a small 1D probability improvement, not a validated
 alerting advantage. Keep these models experimental; do not lower the threshold
 after seeing test outcomes and report that as independent validation.
 
-There are 9 newly published immutable magnitude forecasts for 2026-09-12,
+There are 18 newly published immutable magnitude forecasts for September 12-13,
 separate from backtests. Repeating the daily pipeline on the same closed candle
 does not duplicate them. Live grades begin only after each complete horizon and
-the 03:00 UTC evaluation cutoff. The validated daily ledger has 128 records,
-124 evaluated and 4 pending, with no overdue grades at release preparation.
+the 03:00 UTC evaluation cutoff. The validated daily ledger has 130 records,
+126 evaluated and 4 pending, with no overdue grades at release preparation.
+The concurrent remote daily update was reconciled without changing any of its
+130 published forecast digests. September 11 is graded in both directional lanes.
 
 Validation: 49 regression tests passed; 6 optional deep-learning tests skipped
 locally. Production build, TypeScript and lint are checked separately. Existing
@@ -119,6 +122,8 @@ over many models introduces selection bias; monitor prospective results and dema
 positive after-cost expectancy lower bound before execution. Do not promise 70%.
 Deep challengers remain on the existing weekly process; adding model complexity is
 not evidence of improvement. Promote only after independent evaluation.
+GitHub scheduled runs can be queued or delayed beyond 03:20 UTC; the health check
+reports overdue evaluations instead of treating the schedule as a timing guarantee.
 
 Sources: [Binance public data fields](https://github.com/binance/binance-public-data),
 [scikit-learn probability calibration](https://scikit-learn.org/stable/modules/calibration.html).
