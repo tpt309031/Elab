@@ -40,9 +40,11 @@
   CPU workers to avoid oversubscription. A failed later stage can reuse a completed
   lane; partial lanes are recalculated. Cache files are not committed.
 - [x] Pre-publication verification and atomic per-file artifact replacement.
-- [ ] Regression tests and complete 2024-present refit.
-- [ ] English, responsive activity UI, filtered metrics and freshness handling.
-- [ ] Production build, deployment verification and measured result report.
+- [x] Regression tests and complete 2024-present refit.
+- [x] English, responsive activity UI, filtered metrics and freshness handling.
+- [x] Production build, lint, mobile overflow check and measured result report.
+- Deployment status and the verified production commit are recorded in the GitHub
+  release after publication, rather than inferred from a successful local build.
 
 ## Protocol
 
@@ -58,6 +60,12 @@ direction grades retain the user's exact thresholds and never gain credit from
 event lag. Event forecasts are graded after the horizon closes and 03:00 UTC;
 the existing 03:20 UTC job performs grading, ranking and publication.
 
+The existing grader gives no partial credit below the specified 0.1% directional
+minimum. Exact accuracy, directional sign accuracy and mean weighted grade
+(Correct=1, Partial=0.5, Wrong=0) are different metrics and must be labeled separately.
+Hybrid already contains legacy OHLCV/intraday volume; Hybrid + Volume measures
+the incremental effect of validated fixed-venue turnover and taker flow.
+
 Three feature sets (Index + Astro, Hybrid, Hybrid + Volume) each compare Logistic,
 Histogram GB and base rate. Monthly selection minimizes validation Brier loss;
 the outer test is never used to pick that month's model. Report precision with
@@ -65,6 +73,41 @@ Wilson lower bound, recall, false alarms, misses, average precision, Brier skill
 sample size and dates. Candidate scores are shown alongside selected-model scores.
 Overlapping 3D/5D outcomes are dependent; their sample count is not an independent
 sample size and model comparisons are exploratory, not significance claims.
+
+## Measured release results
+
+Evaluation covers 984 UTC sessions, 2024-01-01 through 2026-09-10. Both lanes
+have 852 calls and 132 abstentions under the chronological 8/4 monthly caps.
+These are simulated walk-forward results, not the official live ledger.
+
+| Ensemble | Exact grade | Directional accuracy | Net expectancy / call | Profit factor | Max drawdown |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Index + Astro (Calendar) | 17.72% | 48.12% | -0.0584% | 0.911 | -58.13% |
+| Full Hybrid | 18.43% | 48.94% | -0.1192% | 0.830 | -81.68% |
+
+Neither ensemble meets the 70% target or the positive-expectancy gate. The best
+individual directional accuracy is 51.93%, not the ensemble result. Prior metrics
+used a different, noncausal quota protocol and are not a valid improvement baseline.
+After-cost expectancy lower bounds remain negative; execution stays FLAT.
+
+The new event audit has 8,856 predictions across three feature sets and three
+horizons. Complete labels number 984 / 982 / 980 per feature set for 1D / 3D / 5D.
+Hybrid + Volume selected-model Brier skill versus the pre-test base rate is
++1.82% / -1.20% / -0.28%, respectively. At the preregistered alert threshold,
+selected models have no correct large-move alerts in this test period. Thus the
+new volume features show a small 1D probability improvement, not a validated
+alerting advantage. Keep these models experimental; do not lower the threshold
+after seeing test outcomes and report that as independent validation.
+
+There are 9 newly published immutable magnitude forecasts for 2026-09-12,
+separate from backtests. Repeating the daily pipeline on the same closed candle
+does not duplicate them. Live grades begin only after each complete horizon and
+the 03:00 UTC evaluation cutoff. The validated daily ledger has 128 records,
+124 evaluated and 4 pending, with no overdue grades at release preparation.
+
+Validation: 49 regression tests passed; 6 optional deep-learning tests skipped
+locally. Production build, TypeScript and lint are checked separately. Existing
+weekly deep-model research is retained and was not retrained in this release.
 
 ## Limitations and next gates
 

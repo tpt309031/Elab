@@ -58,6 +58,7 @@ export function MarketActivityPanel({ data }: { data: ResearchArtifact }) {
         </div>
       </details>
 
+      <p className="border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-5 text-amber-200">Experimental magnitude forecasts, not trading signals. Review precision and missed events below; a low predicted risk does not rule out a large move.</p>
       <div className="grid gap-3 sm:grid-cols-3">
         {next.map((row) => <article key={row.horizon} className={`border p-4 ${row.alert ? "border-primary bg-primary/5" : "border-border bg-card"}`}>
           <div className="flex items-center justify-between gap-2"><p className="eyebrow">{row.horizon}D / |MOVE| &gt; {formatPercent(row.threshold_move, 0)}</p><Activity className="size-4 text-primary" /></div>

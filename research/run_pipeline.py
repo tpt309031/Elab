@@ -713,8 +713,8 @@ def main() -> None:
             "target_reached": bool(achieved >= target_accuracy),
             "deep_research_enabled": bool(args.deep),
             "scoring": {
-                "up": "correct >= +3%; partial +0.1% to < +3%; wrong <= 0%",
-                "down": "correct <= -3%; partial > -3% to -0.1%; wrong >= 0%",
+                "up": "correct >= +3%; partial +0.1% to < +3%; otherwise wrong, including gains below +0.1%",
+                "down": "correct <= -3%; partial > -3% to -0.1%; otherwise wrong, including declines smaller than 0.1%",
                 "sideway": "correct within -1% to +1%; otherwise wrong; no partial",
             },
             "availability_assumption": "Explicit available_at timestamps are enforced before the target UTC session. Sources without timestamps are marked prepublished-imputed; market and intraday features lag two sessions so the daily artifact is fully available before its target opens.",
