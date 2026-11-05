@@ -44,7 +44,7 @@
   "status": "blocked_missing_publication_time_history",
   "reason": "Need verified ETF publication history; mock observations cannot establish OOS improvement.",
   "published_reference": {
-    "generated_at": "2026-11-04T21:18:03Z",
+    "generated_at": "2026-11-05T18:01:34Z",
     "protocol": "causal-quota-calibrated-etf-v3",
     "metrics": [
       {

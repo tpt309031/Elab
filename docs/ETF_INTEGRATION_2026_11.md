@@ -13,7 +13,7 @@
 
 ## Data gate
 
-706 real ETF observations from 2024-01-11 through 2026-11-03 were fetched from
+707 real ETF observations from 2024-01-11 through 2026-11-04 were fetched from
 TFTC's public, CC BY 4.0 archive. They support the daily/cumulative chart. Its
 original publication times are unknown, so `available_at` remains null in that
 archive and it cannot enter training. The strict `macro.csv` remains header-only.
@@ -34,7 +34,8 @@ a regression baseline, not evidence of ETF uplift. No subscription was purchased
   2024-01-01 through 2026-11-01. Lead/purge/calibration/fees/quotas unchanged.
 - A subsequent fast refresh fetched closed BTC candles through 2026-11-03,
   evaluated four forecasts, and produced 234 official records (232 evaluated,
-  two pending). All **232 pre-existing forecast digests** match HEAD exactly.
+  two pending). All **232 pre-existing forecast digests** matched the original
+  baseline commit `deb095f` exactly.
 - Artifact verifier passes; public JSON schema remains version 5 with optional
   ETF fields. Health API reports zero overdue daily/event grades and explicitly
   reports the missing verified-publication feed.
@@ -69,4 +70,19 @@ No verified historical release-vintage dataset was found among the reviewed
 public sources. A provider that supplies such evidence can plug into
 `refresh_etf_flow()` without code changes. Until then, neither the public archive
 nor synthetic fixtures may justify an ETF-driven promotion, attribution or OOS
-improvement claim. Changes have been verified locally; deployment is separate.
+improvement claim.
+
+## Release synchronization (2026-11-05)
+
+- Incorporated the four newer GitHub research commits through `2e1534a` before
+  publication, without replacing their immutable decisions with local trial runs.
+- All **238 GitHub forecast digests** were preserved exactly. The two differing,
+  unpublished local trials for 2026-11-05 were not promoted over the published
+  records. The local trial snapshot remains recoverable in commit `0cf0d09`.
+- Regenerated the ETF artifacts using that published ledger and BTC closes
+  through 2026-11-04. The ETF display archive now contains 707 sessions; the
+  publication-time training feed remains empty and explicitly gated.
+- Reused the tested, protocol-matched 35-fold baseline through 2026-11-01 for
+  the fast daily run; no new ETF OOS accuracy is claimed.
+- Rechecked the 74-pass Python suite, artifact verifier, typecheck, lint and
+  final production build; all passed before publication.
