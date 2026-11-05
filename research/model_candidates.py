@@ -479,6 +479,7 @@ def candidate_model_specs(feature_columns: Sequence[str], random_state: int = 42
             "index_btc_slope_3", "index_me_slope_3", "gap_index", "astro_volatility_z30",
         )
         regime_columns = tuple(column for column in regime_candidates if column in columns)
+        regime_columns += tuple(column for column in columns if column.startswith("etf_"))
         if len(regime_columns) >= 4:
             regime_preprocessor = ColumnTransformer(
                 [("numeric", Pipeline([
@@ -497,12 +498,32 @@ def candidate_model_specs(feature_columns: Sequence[str], random_state: int = 42
                 "target",
                 "regime",
             ))
+    flow_columns = tuple(column for column in columns if column.startswith("etf_") or column in {
+        "market_return_1", "market_return_3", "market_return_7", "volatility_7", "volatility_21",
+        "distance_ma20", "distance_ma50", "rsi14", "atr14_pct", "volatility_regime_z",
+        "dxy", "us10y", "funding_rate", "open_interest", "basis",
+    })
+    if "etf_net_flow" in flow_columns:
+        for name, estimator, scale, target in (
+            ("Flow HistGradientBoosting", HistGradientBoostingClassifier(max_iter=120,
+                max_leaf_nodes=7, min_samples_leaf=30, l2_regularization=3,
+                learning_rate=0.04, random_state=random_state), False, "target"),
+            ("Flow Threshold Utility", ThresholdUtilityClassifier(C=0.15), True, "daily_return"),
+        ):
+            steps = [("imputer", SimpleImputer(strategy="median", keep_empty_features=True))]
+            if scale:
+                steps.append(("scale", StandardScaler()))
+            preprocess = ColumnTransformer([("numeric", Pipeline(steps), list(flow_columns))])
+            specs.append(ModelCandidateSpec(name, Pipeline([("preprocess", preprocess),
+                ("model", estimator)]), flow_columns, target, "flow"))
     return specs
 
 
 def model_availability_rows() -> list[dict[str, object]]:
     installed = lambda package: importlib.util.find_spec(package) is not None
     return [
+        {"model": "Flow HistGradientBoosting", "family": "flow (90+ PIT training rows required)", "available": True, "cadence": "daily", "requires_etf": True},
+        {"model": "Flow Threshold Utility", "family": "flow (90+ PIT training rows required)", "available": True, "cadence": "daily", "requires_etf": True},
         {"model": "Logistic", "family": "linear", "available": True, "cadence": "daily"},
         {"model": "Ordinal Logistic", "family": "ordinal", "available": True, "cadence": "daily"},
         {"model": "Random Forest", "family": "tree", "available": True, "cadence": "daily"},

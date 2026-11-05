@@ -60,6 +60,8 @@ export async function GET() {
       oosEnd: artifact.meta.oos_end,
       stale: artifact.meta.oos_end < utcDate(10),
       volumeStatus: artifact.market_activity?.health.status ?? "unavailable",
+      etfFlowStatus: artifact.etf_flow?.health.status ?? "unavailable",
+      etfLatestPublication: artifact.etf_flow?.health.latest_publication ?? null,
       overdueDailyGrades,
       overdueEventGrades,
     };

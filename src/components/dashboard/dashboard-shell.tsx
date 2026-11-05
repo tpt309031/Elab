@@ -8,6 +8,7 @@ import { CorrelationHeatmap } from "@/components/dashboard/correlation-heatmap";
 import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton";
 import { DecisionStrip } from "@/components/dashboard/decision-strip";
 import { MarketChart } from "@/components/dashboard/market-chart";
+import { EtfFlowPanel } from "@/components/dashboard/etf-flow-panel";
 import { ProbabilityGauge } from "@/components/dashboard/probability-gauge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -196,7 +197,7 @@ export function DashboardShell() {
             </div>
           </div>
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <MarketChart market={chartWindow.market} indices={chartWindow.indices} forecasts={chartWindow.forecasts} volume={data.market_activity?.history} />
+            <MarketChart market={chartWindow.market} indices={chartWindow.indices} forecasts={chartWindow.forecasts} volume={data.market_activity?.history} etf={data.etf_flow?.timeline} />
             <aside className="space-y-4">
               <Card className="panel-grid"><CardHeader><CardTitle className="flex items-center justify-between text-sm"><span className="flex items-center gap-2"><Target className="size-4 text-primary" />Probability stack</span><Badge variant="outline">{nextFull?.lane ?? "Full Hybrid"}</Badge></CardTitle></CardHeader><CardContent><ProbabilityGauge forecast={nextFull} /><div className="space-y-3">{probabilities.map((item) => <div key={item.label}><div className="mb-1 flex justify-between font-mono text-[10px]"><span>{item.label}</span><span>{formatPercent(item.value)}</span></div><Progress value={item.value * 100} className={item.className} /></div>)}</div></CardContent></Card>
               <Card><CardHeader><CardTitle className="text-sm">Decision context</CardTitle></CardHeader><CardContent className="space-y-3 text-xs text-muted-foreground"><p><b className="text-foreground">Session:</b> {nextFull ? formatDate(nextFull.date) : "—"}</p><p><b className="text-foreground">Policy:</b> {nextFull?.policy_mode ?? "calibrated utility"} · SIDEWAY weight {nextFull?.sideway_penalty?.toFixed(2) ?? "—"}</p><p><b className="text-foreground">Execution:</b> {nextFull?.trade_eligible ? `TRADE ${nextFull.trade_action?.toUpperCase()}` : "FLAT"} · lower-bound edge {formatSignedPercent(nextFull?.expectancy_lcb)}</p><p><b className="text-foreground">Members:</b> {nextFull?.model_members?.join(", ") ?? "awaiting selection"}</p><p><b className="text-foreground">Pattern:</b> {nextFull?.top_pattern?.name ?? "No active pattern match"}</p><p><b className="text-foreground">Timing:</b> information through {nextFull?.information_cutoff_utc?.slice(0, 10) ?? data.meta.latest_closed_utc}; target opens {nextFull?.target_start_utc?.slice(0, 10) ?? "—"} UTC.</p></CardContent></Card>
@@ -204,6 +205,7 @@ export function DashboardShell() {
             </aside>
           </div>
           <CorrelationHeatmap rows={data.research.correlation_heatmap} />
+          <EtfFlowPanel data={data} startDate={chartWindow.market[0]?.timestamp} endDate={chartWindow.market.at(-1)?.timestamp} />
         </TabsContent>
         <TabsContent value="forecast"><ForecastPanel data={data} /></TabsContent>
         <TabsContent value="patterns"><PatternPanel data={data} /></TabsContent>

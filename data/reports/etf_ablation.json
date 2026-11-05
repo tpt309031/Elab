@@ -1,0 +1,80 @@
+{
+  "protocol": "causal-quota-calibrated-etf-v3",
+  "health": {
+    "source": "macro",
+    "file": "macro.csv",
+    "available": false,
+    "status": "awaiting verified ETF publications",
+    "rows": 0,
+    "usable_rows": 0,
+    "unit": "USD",
+    "features": [
+      "etf_net_flow",
+      "etf_net_flow_change_1",
+      "etf_net_flow_z30",
+      "etf_flow_cum_3",
+      "etf_flow_cum_7",
+      "etf_flow_cum_14",
+      "etf_flow_cum_30",
+      "etf_flow_intensity",
+      "etf_extreme_inflow",
+      "etf_extreme_outflow",
+      "etf_age_days"
+    ],
+    "availability_mode": "explicit-publication-required",
+    "future_publications_excluded": 0,
+    "latest_observation": null,
+    "latest_publication": null,
+    "availability_imputed_rows": 0
+  },
+  "metrics": [
+    "exact_accuracy",
+    "weighted_accuracy",
+    "directional_accuracy",
+    "expectancy",
+    "brier",
+    "coverage",
+    "sharpe",
+    "profit_factor",
+    "max_drawdown",
+    "observations"
+  ],
+  "verified_observations": 0,
+  "comparison": [],
+  "status": "blocked_missing_publication_time_history",
+  "reason": "Need verified ETF publication history; mock observations cannot establish OOS improvement.",
+  "published_reference": {
+    "generated_at": "2026-11-04T21:18:03Z",
+    "protocol": "causal-quota-calibrated-etf-v3",
+    "metrics": [
+      {
+        "lane": "Calendar",
+        "model": "Calendar Ensemble",
+        "exact_accuracy": 0.17908787541713014,
+        "weighted_accuracy": 0.3197997775305895,
+        "directional_accuracy": 0.4827586206896552,
+        "expectancy": -0.0005524868501689279,
+        "brier": 0.6448494820623261,
+        "coverage": 0.8677606177606177,
+        "sharpe": -0.49121868275042274,
+        "profit_factor": 0.9145286105908481,
+        "max_drawdown": -0.5812752402677062,
+        "observations": 1036
+      },
+      {
+        "lane": "Full Hybrid",
+        "model": "Full Hybrid Ensemble",
+        "exact_accuracy": 0.19021134593993325,
+        "weighted_accuracy": 0.3314794215795328,
+        "directional_accuracy": 0.4972191323692992,
+        "expectancy": -0.0011085525907962826,
+        "brier": 0.6381948311472759,
+        "coverage": 0.8677606177606177,
+        "sharpe": -0.97007225306156,
+        "profit_factor": 0.8389880528072874,
+        "max_drawdown": -0.8167897272746839,
+        "observations": 1036
+      }
+    ]
+  }
+}

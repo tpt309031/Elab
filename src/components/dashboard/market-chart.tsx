@@ -16,13 +16,14 @@ import {
   type Time,
 } from "lightweight-charts";
 
-import type { ForecastRow, IndexRow, MarketRow, SpotVolumeRow } from "@/lib/types";
+import type { EtfTimelineRow, ForecastRow, IndexRow, MarketRow, SpotVolumeRow } from "@/lib/types";
 
 interface MarketChartProps {
   market: MarketRow[];
   indices: IndexRow[];
   forecasts: ForecastRow[];
   volume?: SpotVolumeRow[];
+  etf?: EtfTimelineRow[];
 }
 
 function timeLabel(time: Time | undefined): string {
@@ -33,7 +34,7 @@ function timeLabel(time: Time | undefined): string {
   return `${day.year}-${String(day.month).padStart(2, "0")}-${String(day.day).padStart(2, "0")}`;
 }
 
-export function MarketChart({ market, indices, forecasts, volume }: MarketChartProps) {
+export function MarketChart({ market, indices, forecasts, volume, etf }: MarketChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const indexByDate = useMemo(() => new Map(indices.map((row) => [row.date, row])), [indices]);
@@ -134,7 +135,12 @@ export function MarketChart({ market, indices, forecasts, volume }: MarketChartP
         color: row.forecast === "up" ? "#34d399" : row.forecast === "down" ? "#ef4444" : "#fbbf24",
         text: `${row.forecast.toUpperCase()} ${Math.round(confidence * 100)}%`,
       }));
-    createSeriesMarkers(candles, markerData);
+    const extremes: SeriesMarker<Time>[] = (etf ?? []).filter((row, index, all) => marketDates.has(row.date)
+      && (row.etf_extreme_inflow === 1 || row.etf_extreme_outflow === 1)
+      && (index === 0 || row.etf_net_flow !== all[index - 1].etf_net_flow))
+      .map((row) => ({ time: row.date as Time, position: row.etf_extreme_inflow === 1 ? "belowBar" : "aboveBar",
+        shape: "square", color: "#a78bfa", text: row.etf_extreme_inflow === 1 ? "ETF inflow z>2" : "ETF outflow z<-2" }));
+    createSeriesMarkers(candles, [...markerData, ...extremes].sort((a, b) => String(a.time).localeCompare(String(b.time))));
     const panes = chart.panes();
     panes[0]?.setHeight(compact ? 250 : 330);
     panes[1]?.setHeight(compact ? 150 : 200);
@@ -167,7 +173,7 @@ export function MarketChart({ market, indices, forecasts, volume }: MarketChartP
       observer.disconnect();
       chart.remove();
     };
-  }, [forecasts, indexByDate, indices, market, volume]);
+  }, [forecasts, indexByDate, indices, market, volume, etf]);
 
   return (
     <div className="relative min-h-[480px] w-full overflow-hidden border border-border bg-card sm:min-h-[620px]">
@@ -180,6 +186,7 @@ export function MarketChart({ market, indices, forecasts, volume }: MarketChartP
         <span className="border border-border bg-black/70 px-2 py-1 text-muted-foreground"><i className="mr-1 inline-block size-2 bg-primary" />BTC Psychology</span>
         <span className="border border-border bg-black/70 px-2 py-1 text-muted-foreground"><i className="mr-1 inline-block size-2 bg-[#4f9dff]" />Trader Energy</span>
         <span className="border border-border bg-black/70 px-2 py-1 text-muted-foreground">Highest-confidence calls in view</span>
+        {!!etf?.some((row) => row.etf_net_flow != null) && <span className="border border-border bg-black/70 px-2 py-1 text-violet-300">ETF extremes: eligible forecast date</span>}
       </div>
     </div>
   );

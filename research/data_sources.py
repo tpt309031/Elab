@@ -96,6 +96,10 @@ def load_external_features(directory: str | Path) -> tuple[pd.DataFrame, list[di
     health: list[dict[str, object]] = []
     lineage: list[dict[str, object]] = []
     for filename, expected_columns in EXTERNAL_SCHEMAS.items():
+        if filename == "macro.csv":
+            # Macro dates are observation dates, not forecast dates. The pipeline
+            # loads their publication vintages separately via research.etf_flow.
+            continue
         path = root / filename
         if not path.exists():
             health.append({

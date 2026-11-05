@@ -58,6 +58,27 @@ export interface ExternalHealth {
   status: string;
   rows: number;
   usable_rows: number;
+  latest_observation?: string | null;
+  latest_publication?: string | null;
+  archive_status?: string;
+  archive_rows?: number;
+  error?: string;
+}
+
+export interface EtfTimelineRow {
+  date: string;
+  etf_net_flow: number | null;
+  etf_net_flow_z30: number | null;
+  etf_extreme_inflow: number | null;
+  etf_extreme_outflow: number | null;
+}
+
+export interface EtfEvidence {
+  model: string;
+  method: string;
+  training_end: string;
+  target_date: string;
+  features: { feature: string; down: number; sideway: number; up: number }[];
 }
 
 export interface PatternReference {
@@ -386,6 +407,27 @@ export interface LargeMoveMetric {
 }
 
 export interface ResearchArtifact {
+  etf_flow?: {
+    health: ExternalHealth;
+    history: { date: string; available_at: string; etf_net_flow: number; cumulative_flow: number }[];
+    display_archive?: {
+      history: { date: string; available_at: null; etf_net_flow: number; cumulative_flow: number }[];
+      status: string;
+      training_eligible: false;
+      attribution?: string;
+      source_url?: string;
+      methodology_url?: string;
+      license?: string;
+      retrieved_at?: string;
+      checked_at?: string;
+    } | null;
+    timeline: EtfTimelineRow[];
+    latest: EtfTimelineRow[];
+    correlations: { feature: string; samples: number; correlation: number | null }[];
+    contribution: EtfEvidence | null;
+    contribution_status: string;
+    definitions: Record<string, string>;
+  };
   market_activity?: {
     health: { source: string; status: string; latest_closed_utc: string | null; rows: number; missing_days: number; errors: string[] };
     history: SpotVolumeRow[];
@@ -571,6 +613,8 @@ export interface SystemHealthResponse {
     oosEnd: string;
     stale: boolean;
     volumeStatus: string;
+    etfFlowStatus?: string;
+    etfLatestPublication?: string | null;
     overdueDailyGrades: number;
     overdueEventGrades: number;
   };

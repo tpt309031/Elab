@@ -163,6 +163,8 @@ def official_forecast_digest(forecast: dict[str, Any]) -> str:
         "model_weights", "top_pattern",
     )
     published = {field: forecast.get(field) for field in fields}
+    if forecast.get("etf_evidence") is not None:
+        published["etf_evidence"] = forecast["etf_evidence"]
     if contract_version >= 2:
         contract_fields = (
             "contract_version", "information_cutoff_utc", "target_start_utc", "target_end_utc",
@@ -337,6 +339,8 @@ def append_official_forecast(
         "expected_net_return": forecast.get("expected_net_return"),
         "expectancy_lcb": forecast.get("expectancy_lcb"),
     }
+    if isinstance(forecast.get("etf_evidence"), dict):
+        entry["etf_evidence"] = forecast["etf_evidence"]
     entry["immutable_digest"] = official_forecast_digest(entry)
     state.setdefault("forecasts", []).append(entry)
     state["forecasts"] = sorted(
@@ -650,6 +654,9 @@ def apply_live_model_ranking(
     output = output.sort_values("adaptive_rank_score", ascending=False).reset_index(drop=True)
     output["rank"] = np.arange(1, len(output) + 1)
     eligible = output["coverage"] >= 0.80
+    flow_model = output["model"].astype(str).str.startswith("Flow ")
+    flow_ready = (output.get("observations", pd.Series(0, index=output.index)) >= 365) & (output["live_samples"] >= MIN_LIVE_PROMOTION_SAMPLES)
+    eligible &= ~flow_model | flow_ready
     if "weighted_lcb" in output:
         eligible &= output["weighted_lcb"].fillna(0) >= 0.20
     if "expectancy_lcb" in output:
@@ -723,6 +730,9 @@ def apply_live_model_ranking(
         elif row["status"] == "active":
             reasons.append("monthly promotion with sufficient live evidence")
         elif not bool(row["trade_eligible"]):
+            if model.startswith("Flow ") and (int(row.get("observations", 0)) < 365 or int(row["live_samples"]) < MIN_LIVE_PROMOTION_SAMPLES):
+                reasons.append("standby: flow model needs 365 OOS and 20 immutable live grades")
+                continue
             reasons.append(
                 "standby: execution suspended by recent outcome drift"
                 if execution_suspended

@@ -65,7 +65,11 @@ def test_candidate_registry_keeps_optional_models_explicit() -> None:
         "Quantile Boosting", "Hurdle Return", "Threshold Utility", "XGBoost", "LightGBM",
         "CatBoost", "HMM Regime",
     }
-    assert required == set(status)
+    flow = {"Flow HistGradientBoosting", "Flow Threshold Utility"}
+    assert required | flow == set(status)
+    assert all(status[name]["requires_etf"] for name in flow)
+    assert not flow.intersection(spec_names)
+    assert flow.issubset({spec.name for spec in candidate_model_specs([*columns, "etf_net_flow"])})
     for name in required:
         if status[name]["available"]:
             assert name in spec_names

@@ -13,6 +13,10 @@ from threadpoolctl import threadpool_limits
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from research.etf_flow import load_macro, refresh_etf_flow
+from research.etf_research import etf_report, history_digest
+from research.etf_sources import load_public_history, refresh_public_history
+
 from research.hybrid_core import (
     FORECAST_LEAD_DAYS,
     MAX_NO_CALL_PER_MONTH,
@@ -461,11 +465,36 @@ def main() -> None:
             })
     intraday_features = build_intraday_daily_features(intraday_frames)
     external, external_health, external_lineage = load_external_features(ROOT / "data" / "external")
+    macro_path = ROOT / "data" / "external" / "macro.csv"
+    etf_refresh = {"status": "cached"}
+    if not args.no_refresh:
+        try:
+            etf_refresh = refresh_etf_flow(macro_path)
+        except Exception as exc:
+            # Preserve validated prior vintages; never log credential-bearing URLs.
+            etf_refresh = {"status": "failed", "error_type": type(exc).__name__}
+    macro, macro_health = load_macro(macro_path)
+    macro_health["refresh"] = etf_refresh
+    archive_path = macro_path.with_name("etf_history.json")
+    archive_refresh = {"status": "cached"}
+    if not args.no_refresh:
+        try:
+            archive_refresh = refresh_public_history(archive_path)
+        except Exception as exc:
+            archive_refresh = {"status": "failed", "error_type": type(exc).__name__}
+    etf_archive = load_public_history(archive_path)
+    etf_archive["refresh"] = archive_refresh
+    macro_health["archive_status"] = etf_archive["status"]
+    macro_health["archive_rows"] = len(etf_archive["history"])
+    external_health.append(macro_health)
+    if macro_path.exists():
+        external_lineage.append(source_lineage(macro_path, "macro", len(macro),
+            macro["date"].min(), macro["date"].max(), len(macro), "explicit-publication-required"))
     latest_closed = pd.to_datetime(market["timestamp"]).max().normalize()
     volume_path = ROOT / "data" / "cache" / "binance_spot_volume_1d.csv"
     spot_volume, volume_health = refresh_volume(volume_path, latest_closed, refresh=not args.no_refresh)
     evaluated_forecasts = grade_learning_state(learning_state, market, latest_closed, run_at)
-    frame, groups = build_feature_frame(indices, market, astro, intraday_features, external, spot_volume)
+    frame, groups = build_feature_frame(indices, market, astro, intraday_features, external, spot_volume, macro)
     print("Features ready; starting purged directional walk-forward", flush=True)
     analog_columns = [
         "index_BTC", "index_me", "gap_index", "index_btc_change_1", "index_me_change_1",
@@ -473,8 +502,12 @@ def main() -> None:
         "volatility", "astro_composite_change_1", "astro_volatility_z30", "dow_sin", "dow_cos",
     ]
 
-    calendar = _restore_backtest(previous_payload, "Calendar") if args.fast else None
-    full = _restore_backtest(previous_payload, "Full Hybrid") if args.fast else None
+    old_end = previous_payload.get("meta", {}).get("oos_end", "2024-01-01")
+    previous_etf = previous_payload.get("meta", {}).get("validation", {}).get("etf_history_digest")
+    can_restore = args.fast and previous_etf == history_digest(macro, old_end)
+    can_restore = can_restore and previous_payload.get("research", {}).get("feature_groups", {}).get("full") == groups["full"]
+    calendar = _restore_backtest(previous_payload, "Calendar") if can_restore else None
+    full = _restore_backtest(previous_payload, "Full Hybrid") if can_restore else None
     pipeline_mode = "fast-daily" if calendar is not None and full is not None else "full-research"
     if calendar is None or full is None:
         calendar = checkpointed_walk_forward(
@@ -694,6 +727,7 @@ def main() -> None:
                                           previous_payload.get("large_moves"), args.fast)
     flow_history = spot_volume.merge(volume_features(spot_volume), on="date") if len(spot_volume) else spot_volume
     payload = {
+        "etf_flow": etf_report(macro, frame, macro_health, learning_state, first_target[:10], etf_archive),
         "large_moves": large_moves,
         "market_activity": {"health": volume_health, "history": serialize_frame(flow_history)},
         "meta": {
@@ -727,6 +761,7 @@ def main() -> None:
             },
             "validation": {
                 "protocol": RESEARCH_PROTOCOL,
+                "etf_history_digest": history_digest(macro, pd.Timestamp(oos_end).strftime("%Y-%m-%d")),
                 "outer": "monthly rolling walk-forward",
                 "rolling_train_days": 1460,
                 "purge_days": 7,

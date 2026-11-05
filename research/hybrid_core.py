@@ -38,7 +38,7 @@ SIDEWAY_LIMIT = 0.01
 # future forecasts. They limit class concentration without changing outcomes.
 MAX_SIDEWAY_PER_MONTH = 8
 MAX_NO_CALL_PER_MONTH = 4
-RESEARCH_PROTOCOL = "causal-quota-calibrated-volume-v2"
+RESEARCH_PROTOCOL = "causal-quota-calibrated-etf-v3"
 UP_PARTIAL_MIN = 0.001
 DOWN_PARTIAL_MAX = -0.001
 TRADING_COST = 0.0005
@@ -457,6 +457,7 @@ def build_feature_frame(
     intraday: pd.DataFrame | None = None,
     external: pd.DataFrame | None = None,
     spot_volume: pd.DataFrame | None = None,
+    macro: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, dict[str, list[str]]]:
     market = market.copy().sort_values("timestamp")
     market["date"] = pd.to_datetime(market["timestamp"]).dt.normalize()
@@ -525,6 +526,8 @@ def build_feature_frame(
             intraday_columns.append(f"{column}_z20")
     external_columns: list[str] = []
     if external is not None and not external.empty:
+        if "etf_net_flow" in external:
+            raise ValueError("ETF observations must use the macro argument with explicit available_at")
         external_frame = external.copy()
         external_frame["date"] = pd.to_datetime(external_frame["date"]).dt.normalize()
         external_columns = [column for column in external_frame if column != "date"]
@@ -704,12 +707,30 @@ def build_feature_frame(
         "astro_index_alignment", "astro_index_tension", "shock_confluence", "volatility_confluence",
         "dow_sin", "dow_cos", "doy_sin", "doy_cos",
     ]
+    etf_columns: list[str] = []
+    if macro is not None:
+        from research.etf_flow import ETF_FEATURES, macro_features
+
+        aligned = macro_features(macro, frame["date"], FORECAST_LEAD_DAYS)
+        frame = frame.merge(aligned, on="date", how="left", validate="one_to_one")
+        for field in ("dxy", "us10y"):
+            if field in aligned:
+                frame[f"{field}_change_1"] = frame[field].diff()
+                frame[f"{field}_z30"] = _rolling_zscore(frame[field], 30)
+                external_columns.extend([field, f"{field}_change_1", f"{field}_z30"])
+        for feature in ("index_BTC", "volatility_regime_z", "same_phase"):
+            frame[f"etf_x_{feature}"] = frame["etf_net_flow"] * frame[feature]
+        # An absent feed must not change candidate dimensions or create evidence.
+        if frame["etf_net_flow"].notna().any():
+            etf_columns = [*ETF_FEATURES, *[f"etf_x_{c}" for c in ("index_BTC", "volatility_regime_z", "same_phase")]]
+            external_columns.extend(etf_columns)
     groups = {
         "technical": technical_columns,
         "index": index_columns,
         "astro": astro_columns,
         "interaction": interaction_columns,
         "external": external_columns,
+        "etf": etf_columns,
     }
     groups["calendar"] = index_columns + astro_columns + interaction_columns
     groups["full"] = technical_columns + index_columns + astro_columns + interaction_columns + external_columns
@@ -721,6 +742,7 @@ def build_feature_frame(
     sequence_full_base = sequence_calendar_base + [
         "market_return_1", "market_return_3", "volatility_7", "distance_ma20", "rsi14", "atr14_pct",
     ]
+    sequence_full_base += etf_columns
     sequence_full_base += [
         column for column in (
             "intraday_realized_vol_1h", "intraday_trend_1h", "intraday_signed_volume_1h",
@@ -1477,6 +1499,10 @@ def run_walk_forward(
             except ImportError:
                 pass
         for name, model, model_columns, target_column in model_specs:
+            if name.startswith("Flow "):
+                from research.etf_flow import MIN_FLOW_TRAINING_ROWS
+                if train["etf_net_flow"].notna().sum() < MIN_FLOW_TRAINING_ROWS:
+                    continue
             fitted = clone(model)
             try:
                 target_values = (
@@ -1842,6 +1868,7 @@ def fit_latest_forecasts(
     matrix = reward_matrix(train)
     candidates: list[CandidatePrediction] = []
     future_probabilities_by_model: dict[str, np.ndarray] = {}
+    etf_explanation: dict[str, object] | None = None
     model_specs: list[tuple[str, object, Sequence[str], str]] = [
         (spec.name, spec.estimator, spec.columns, spec.target_column)
         for spec in candidate_model_specs(feature_columns)
@@ -1869,6 +1896,10 @@ def fit_latest_forecasts(
         except ImportError:
             pass
     for name, model, model_columns, target_column in model_specs:
+        if name.startswith("Flow "):
+            from research.etf_flow import MIN_FLOW_TRAINING_ROWS
+            if train["etf_net_flow"].notna().sum() < MIN_FLOW_TRAINING_ROWS or pd.isna(future.iloc[0]["etf_net_flow"]):
+                continue
         initial = clone(model)
         try:
             train_target = (
@@ -1906,6 +1937,17 @@ def fit_latest_forecasts(
             calibrator.diagnostics_.method, calibrator.diagnostics_.selection_log_loss,
         ))
         future_probabilities_by_model[name] = future_probabilities
+        if name == "Logistic" and "etf_net_flow" in model_columns and pd.notna(future.iloc[0]["etf_net_flow"]):
+            transformed = initial.named_steps["preprocess"].transform(future[list(model_columns)].head(1))[0]
+            estimator = initial.named_steps["model"]
+            etf_explanation = {
+                "model": name, "method": "standardized coefficient x feature; uncalibrated class logit",
+                "training_end": train["date"].max().strftime("%Y-%m-%d"),
+                "target_date": future.iloc[0]["date"].strftime("%Y-%m-%d"),
+                "features": [dict(feature=column, **{CLASS_NAMES[int(label)]: float(estimator.coef_[class_index, j] * transformed[j])
+                    for class_index, label in enumerate(estimator.classes_)})
+                    for j, column in enumerate(model_columns) if column.startswith("etf_")],
+            }
 
     analog_history = pd.concat([train, calibration_fit], ignore_index=True)
     training_registry = build_pattern_registry(analog_history)
@@ -2044,6 +2086,7 @@ def fit_latest_forecasts(
             "information_cutoff_utc": information_cutoff,
             "target_start_utc": target_start,
             "target_end_utc": target_end,
+            "etf_evidence": etf_explanation if row_index == 0 else None,
         })
     selected_weights = {candidate.name: float(weight) for candidate, weight in zip(selected, weights)}
     selection_rows: list[dict[str, object]] = []

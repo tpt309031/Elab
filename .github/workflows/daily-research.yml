@@ -43,6 +43,9 @@ jobs:
         run: python -m pytest tests -q
 
       - name: Refresh market and walk-forward artifacts
+        env:
+          ELAB_ETF_FLOW_URL: ${{ vars.ELAB_ETF_FLOW_URL }}
+          ELAB_ETF_FLOW_TOKEN: ${{ secrets.ELAB_ETF_FLOW_TOKEN }}
         shell: bash
         run: |
           for attempt in 1 2 3; do
@@ -67,6 +70,8 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add data/cache/BTCUSDT_1d.csv data/cache/BTCUSDT_1h.csv data/cache/BTCUSDT_4h.csv data/hybrid_research.json data/hybrid_research_core.json data/learning_state.json public/data/hybrid_research.json public/data/hybrid_research_core.json
           if [[ -f data/cache/binance_spot_volume_1d.csv ]]; then git add data/cache/binance_spot_volume_1d.csv; fi
+          if [[ -f data/external/macro.csv ]]; then git add data/external/macro.csv; fi
+          if [[ -f data/external/etf_history.json ]]; then git add data/external/etf_history.json data/external/etf_snapshots; fi
           if git diff --cached --quiet; then
             echo "No closed-candle or research changes"
             exit 0

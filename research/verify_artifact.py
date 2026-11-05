@@ -202,11 +202,15 @@ def verify(artifact: dict[str, object], state: dict[str, object]) -> dict[str, o
     required_oos_models = {
         str(row["model"])
         for row in availability
-        if row.get("available") and row.get("cadence") == "daily"
+        if row.get("available") and row.get("cadence") == "daily" and not row.get("requires_etf")
     }
     for lane in ("Calendar", "Full Hybrid"):
         lane_rows = [row for row in rankings if row.get("lane") == lane]
         active = [row for row in lane_rows if row.get("status") == "active"]
+        for row in active:
+            if str(row.get("model", "")).startswith("Flow "):
+                if int(row.get("observations", 0)) < 365 or int(row.get("live_samples", 0)) < 20:
+                    raise AssertionError("Flow promotion needs 365 OOS and 20 immutable live observations")
         if len(active) > 4:
             raise AssertionError(f"{lane} must have no more than 4 active models")
         if any(float(row.get("expectancy_lcb", float("-inf"))) <= 0 for row in active):
